@@ -1,0 +1,14 @@
+[project]
+name = "smart-vision"
+version = "0.1.0"
+description = "Transforms ordinary CCTV cameras into intelligent home safety assistants."
+readme = "README.md"
+requires-python = ">=3.13"
+
+[tool.black]
+line-length = 88
+target-version = ["py313"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
