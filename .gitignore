@@ -25,5 +25,11 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+models/
+weights/
 
+# Ruff cache
+.ruff_cache/
 
+# Python package metadata
+*.egg-info/

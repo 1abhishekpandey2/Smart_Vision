@@ -4,6 +4,16 @@ version = "0.1.0"
 description = "Transforms ordinary CCTV cameras into intelligent home safety assistants."
 readme = "README.md"
 requires-python = ">=3.13"
+dependencies = [
+    "opencv-python",
+    "ultralytics",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+pythonpath = "."
 
 [tool.black]
 line-length = 88
