@@ -161,6 +161,7 @@ def test_observe_rejects_non_boolean_values():
     with pytest.raises(TypeError):
         temporal.observe(1)
 
+
 def test_positive_count_reports_current_positive_observations():
     temporal = TemporalPersistence(
         window_size=5,
