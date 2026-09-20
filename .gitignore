@@ -33,3 +33,6 @@ weights/
 
 # Python package metadata
 *.egg-info/
+
+data/videos/*.mp4
+
