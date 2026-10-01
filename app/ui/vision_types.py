@@ -12,6 +12,9 @@ class VisionSettings:
     person_enabled: bool
     intrusion_enabled: bool
 
+    loitering_enabled: bool
+    dwell_seconds: int
+
     show_track_paths: bool
 
     fire_confidence: float
@@ -27,7 +30,7 @@ class VisionRequest:
     # 0.0 <= x <= 1.0
     # 0.0 <= y <= 1.0
     zone_points: tuple[Point, ...]
-
+    source_time_seconds: float
     generation: int
 
 
@@ -66,6 +69,7 @@ class VisionResult:
 
     people_count: int
     inside_zone_count: int
+    loitering_count: int
 
     fire_evidence: str
     fire_confirmed: bool

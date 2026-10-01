@@ -1,5 +1,5 @@
 from pathlib import Path
-
+from time import monotonic
 
 from PyQt5.QtCore import (
     QThread,
@@ -75,6 +75,7 @@ class MainWindow(QMainWindow):
 
         self._timeline_dragging = False
         self._video_duration = 0.0
+        self._video_position_seconds = 0.0
 
         self._last_frame = None
 
@@ -555,10 +556,7 @@ class MainWindow(QMainWindow):
 
         self.loitering_enabled = QCheckBox("Loitering / Dwell")
 
-        # Not implemented yet: don't pretend it works.
-        self.loitering_enabled.setEnabled(False)
-
-        self.loitering_enabled.setToolTip("Loitering will be implemented next.")
+        self.loitering_enabled.setChecked(False)
 
         layout.addWidget(self.fire_enabled)
 
@@ -575,6 +573,10 @@ class MainWindow(QMainWindow):
         self.person_enabled.stateChanged.connect(self._analysis_configuration_changed)
 
         self.intrusion_enabled.stateChanged.connect(
+            self._analysis_configuration_changed
+        )
+
+        self.loitering_enabled.stateChanged.connect(
             self._analysis_configuration_changed
         )
 
@@ -637,6 +639,11 @@ class MainWindow(QMainWindow):
         dwell_row.addWidget(self.dwell_seconds)
 
         layout.addLayout(dwell_row)
+        self.loitering_enabled.toggled.connect(self._update_dwell_controls)
+
+        self.person_enabled.toggled.connect(self._update_dwell_controls)
+
+        self.dwell_seconds.valueChanged.connect(self._analysis_configuration_changed)
 
         # ======================================================
         # CONFIDENCE
@@ -721,6 +728,18 @@ class MainWindow(QMainWindow):
         layout.addStretch()
 
         return panel
+
+    def _update_dwell_controls(
+        self,
+        *args,
+    ):
+        person_enabled = self.person_enabled.isChecked()
+
+        self.loitering_enabled.setEnabled(person_enabled)
+
+        self.dwell_seconds.setEnabled(
+            person_enabled and self.loitering_enabled.isChecked()
+        )
 
     # ==========================================================
     # VIDEO PLAYER CONNECTION
@@ -824,6 +843,10 @@ class MainWindow(QMainWindow):
 
         if not success:
             return
+
+        self._active_source_kind = "video"
+
+        self._video_position_seconds = 0.0
 
         self._selected_video_path = path
 
@@ -961,7 +984,11 @@ class MainWindow(QMainWindow):
             fire_enabled=(self.fire_enabled.isChecked()),
             person_enabled=(self.person_enabled.isChecked()),
             intrusion_enabled=(self.intrusion_enabled.isChecked()),
+            loitering_enabled=(
+                self.loitering_enabled.isChecked() and self.person_enabled.isChecked()
+            ),
             show_track_paths=(self.track_paths_enabled.isChecked()),
+            dwell_seconds=(self.dwell_seconds.value()),
             fire_confidence=(self.fire_confidence.value()),
             person_confidence=(self.person_confidence.value()),
         )
@@ -984,10 +1011,17 @@ class MainWindow(QMainWindow):
 
             return
 
+        source_time_seconds = (
+            self._video_position_seconds
+            if self._active_source_kind == "video"
+            else monotonic()
+        )
+
         request = VisionRequest(
             frame=frame,
             settings=settings,
             zone_points=(tuple(self.video_view.zone_points)),
+            source_time_seconds=source_time_seconds,
             generation=(self._analysis_generation),
         )
 
@@ -1027,7 +1061,7 @@ class MainWindow(QMainWindow):
             people=(result.people_count),
             fire_evidence=(result.fire_evidence),
             inside_zone=(result.inside_zone_count),
-            loitering=0,
+            loitering=(result.loitering_count),
         )
 
         for event in result.events:
@@ -1152,6 +1186,8 @@ class MainWindow(QMainWindow):
                 self.webcam_controller.start()
 
     def _restart_video(self):
+        self._video_position_seconds = 0.0
+
         self._reset_vision_runtime(reanalyse=False)
 
         self.video_player.restart()
@@ -1214,6 +1250,8 @@ class MainWindow(QMainWindow):
         self,
         seconds: float,
     ):
+        self._video_position_seconds = seconds
+
         self.current_time_label.setText(self._format_time(seconds))
 
         if self._timeline_dragging or self._video_duration <= 0:
@@ -1261,9 +1299,11 @@ class MainWindow(QMainWindow):
     ):
         self._timeline_dragging = False
 
-        self._reset_vision_runtime(reanalyse=False)
-
         ratio = value / 1000.0
+
+        self._video_position_seconds = ratio * self._video_duration
+
+        self._reset_vision_runtime(reanalyse=False)
 
         self.video_player.seek_ratio(ratio)
 

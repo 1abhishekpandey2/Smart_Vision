@@ -6,6 +6,7 @@ from PyQt5.QtCore import (
     pyqtSlot,
 )
 
+from app.reasoning.dwell import DwellTracker
 from app.reasoning.temporal import TemporalPersistence
 from app.tracking.history import TrackHistoryStore
 from app.ui.vision_types import (
@@ -121,6 +122,12 @@ class VisionWorker(QObject):
         # or redrew the restricted zone.
         self._zone_signature = None
 
+        # ======================================================
+        # DWELL / LOITERING STATE
+        # ======================================================
+
+        self._dwell_tracker = DwellTracker()
+
     # ==========================================================
     # MODEL LOADING
     # ==========================================================
@@ -220,6 +227,7 @@ class VisionWorker(QObject):
         self._history_store.clear()
 
         self._zone_signature = None
+        self._dwell_tracker.reset()
 
         # ------------------------------------------------------
         # BYTETRACK
@@ -294,6 +302,7 @@ class VisionWorker(QObject):
             people_count = 0
 
             inside_zone_count = 0
+            loitering_count = 0
 
             zone_active = False
 
@@ -429,6 +438,7 @@ class VisionWorker(QObject):
                 self._active_intrusion_ids.clear()
 
                 self._history_store.clear()
+                self._dwell_tracker.reset()
 
                 self._zone_signature = zone_signature
 
@@ -466,6 +476,12 @@ class VisionWorker(QObject):
                 ]
 
                 people_count = len(tracks)
+                zone_reasoning_enabled = (
+                    settings.intrusion_enabled or settings.loitering_enabled
+                )
+
+                if not settings.loitering_enabled:
+                    self._dwell_tracker.reset()
 
                 # If intrusion monitoring is disabled,
                 # nobody should remain marked as an intruder.
@@ -504,16 +520,16 @@ class VisionWorker(QObject):
                     # RESTRICTED-ZONE REASONING
                     # ==========================================
 
-                    if zone is not None and settings.intrusion_enabled:
-
+                    if zone is not None and zone_reasoning_enabled:
                         inside_zone = zone.contains(ground_point)
 
                         if inside_zone:
 
                             inside_zone_count += 1
 
-                        previous_inside = self._previous_inside.get(track.track_id)
+                    if zone is not None and settings.intrusion_enabled:
 
+                        previous_inside = self._previous_inside.get(track.track_id)
                         # ======================================
                         # ENTRY
                         #
@@ -562,6 +578,40 @@ class VisionWorker(QObject):
 
                         # Save current state for next frame.
                         self._previous_inside[track.track_id] = inside_zone
+                    # ==========================================
+                    # DWELL / LOITERING
+                    # ==========================================
+
+                    dwell_state = None
+
+                    if settings.loitering_enabled:
+
+                        dwell_state = self._dwell_tracker.observe(
+                            track_id=track.track_id,
+                            inside_zone=inside_zone,
+                            now_seconds=request.source_time_seconds,
+                            threshold_seconds=settings.dwell_seconds,
+                        )
+
+                        if dwell_state.is_loitering:
+
+                            loitering_count += 1
+
+                        if dwell_state.just_triggered:
+
+                            events.append(
+                                VisionEvent(
+                                    timestamp=(frame.timestamp),
+                                    event_type="LOITERING",
+                                    description=(
+                                        f"Person "
+                                        f"#{track.track_id} "
+                                        f"exceeded "
+                                        f"{settings.dwell_seconds}s "
+                                        f"dwell time"
+                                    ),
+                                )
+                            )
 
                     # ==========================================
                     # INTRUSION TRACK PATH
@@ -598,20 +648,38 @@ class VisionWorker(QObject):
                     # PERSON BOX
                     # ==========================================
 
+                    person_label = (
+                        f"Person " f"#{track.track_id} " f"{track.confidence:.0%}"
+                    )
+
+                    if dwell_state is not None and inside_zone:
+
+                        person_label += (
+                            f" | Dwell " f"{dwell_state.elapsed_seconds:.1f}s"
+                        )
+
+                    if dwell_state is not None and dwell_state.is_loitering:
+
+                        person_label += " | LOITERING"
+
+                    person_alert = settings.intrusion_enabled and inside_zone
+
+                    if dwell_state is not None and dwell_state.is_loitering:
+
+                        person_alert = True
+
                     overlays.append(
                         OverlayBox(
                             bounding_box=(track.bounding_box),
-                            label=(
-                                f"Person "
-                                f"#{track.track_id} "
-                                f"{track.confidence:.0%}"
-                            ),
+                            label=person_label,
                             kind="person",
-                            alert=(inside_zone),
+                            alert=person_alert,
                         )
                     )
 
-                zone_active = inside_zone_count > 0
+                zone_active = (
+                    settings.intrusion_enabled and inside_zone_count > 0
+                ) or loitering_count > 0
 
             else:
 
@@ -624,6 +692,8 @@ class VisionWorker(QObject):
 
                 self._history_store.clear()
 
+                self._dwell_tracker.reset()
+
             # ==================================================
             # CREATE RESULT
             # ==================================================
@@ -634,6 +704,7 @@ class VisionWorker(QObject):
                 track_paths=tuple(track_paths),
                 people_count=(people_count),
                 inside_zone_count=(inside_zone_count),
+                loitering_count=(loitering_count),
                 fire_evidence=(fire_evidence),
                 fire_confirmed=(fire_confirmed),
                 zone_active=(zone_active),
