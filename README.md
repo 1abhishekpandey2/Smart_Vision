@@ -1,4 +1,3 @@
-
 # Smart Vision
 
 ![Version](https://img.shields.io/badge/version-v0.2.0-blue)
@@ -8,11 +7,25 @@
 
 **Intelligent Video Monitoring, Tracking, Spatial Reasoning, and Event Analysis Platform**
 
-Smart Vision is a modular intelligent video-monitoring system built with Python, OpenCV, Ultralytics YOLO, and PyQt5.
+Smart Vision is a modular AI-powered video monitoring platform designed to
+transform conventional CCTV and webcam feeds into intelligent safety and
+surveillance systems.
 
-The project began as a live fire and smoke detection system and has evolved into a structured video-intelligence platform capable of working with live and recorded video, detecting and tracking people, monitoring restricted areas, reasoning across multiple frames, generating intrusion events, and presenting results through a desktop monitoring interface.
+The project combines computer vision, object tracking, temporal reasoning,
+restricted-zone analysis, and event generation to move beyond frame-by-frame
+detection toward meaningful interpretation of video.
 
----
+Current development focuses on:
+
+- Fire and smoke detection
+- Temporal fire reasoning
+- Person detection and multi-object tracking
+- Restricted-zone monitoring
+- Intrusion entry and exit detection
+- Dwell / loitering detection
+- Live webcam monitoring
+- Recorded-video analysis
+- Event visualization through a PyQt5 desktop interface
 
 # Version
 
@@ -832,7 +845,7 @@ pytest
 Current verified test result for v0.2.0 development:
 
 ```text
-24 passed
+30 passed
 ```
 
 Current automated tests cover areas including:
