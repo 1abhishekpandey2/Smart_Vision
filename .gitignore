@@ -36,3 +36,11 @@ weights/
 
 data/videos/*.mp4
 
+# Local face-recognition development data
+data/face_test/
+data/face_eval/
+data/face_registry/
+data/face_queries/
+
+# Generated face-recognition registries
+data/*.npz
