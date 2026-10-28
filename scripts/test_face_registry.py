@@ -11,36 +11,6 @@ IMAGE_SUFFIXES = {
 }
 
 
-def load_registry(
-    registry_path: Path,
-    embedder: InsightFaceEmbedder,
-) -> FaceRegistry:
-    registry = FaceRegistry()
-
-    for identity_dir in sorted(registry_path.iterdir()):
-        if not identity_dir.is_dir():
-            continue
-
-        identity = identity_dir.name
-
-        print(f"Registering: {identity}")
-
-        for image_path in sorted(identity_dir.iterdir()):
-            if image_path.suffix.lower() not in IMAGE_SUFFIXES:
-                continue
-
-            embedding = embedder.embed_image(image_path)
-
-            registry.add_sample(
-                identity,
-                embedding,
-            )
-
-            print(f"  added {image_path.name}")
-
-    return registry
-
-
 def main() -> None:
     parser = ArgumentParser()
 
@@ -58,10 +28,7 @@ def main() -> None:
 
     embedder = InsightFaceEmbedder()
 
-    registry = load_registry(
-        args.registry,
-        embedder,
-    )
+    registry = FaceRegistry.load(args.registry)
 
     query_embedding = embedder.embed_image(args.query)
 

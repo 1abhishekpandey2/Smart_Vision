@@ -22,7 +22,9 @@ from PyQt5.QtWidgets import (
     QHeaderView,
     QLabel,
     QListWidget,
+    QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QShortcut,
     QSizePolicy,
@@ -56,6 +58,8 @@ class MainWindow(QMainWindow):
     vision_request = pyqtSignal(object)
 
     vision_reset_request = pyqtSignal()
+
+    face_registration_request = pyqtSignal(str, object)
 
     def __init__(self):
         super().__init__()
@@ -303,6 +307,33 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self.source_info)
 
+        layout.addSpacing(14)
+
+        layout.addWidget(self._section_title("FACE REGISTRATION"))
+
+        self.face_identity_input = QLineEdit()
+
+        self.face_identity_input.setPlaceholderText("Identity name")
+        self.face_identity_input.setStyleSheet(
+            "QLineEdit { color: #000000; background-color: #ffffff; }"
+        )
+
+        layout.addWidget(self.face_identity_input)
+
+        self.register_faces_button = QPushButton("Add Images to Gallery")
+
+        self.register_faces_button.clicked.connect(self._register_face_images_clicked)
+
+        layout.addWidget(self.register_faces_button)
+
+        self.face_registration_status = QLabel(
+            "Choose photos with exactly one face each."
+        )
+
+        self.face_registration_status.setWordWrap(True)
+
+        layout.addWidget(self.face_registration_status)
+
         layout.addStretch()
 
         return panel
@@ -540,6 +571,24 @@ class MainWindow(QMainWindow):
 
         self.person_enabled.setChecked(True)
 
+        self.face_recognition_enabled = QCheckBox("Face Recognition")
+
+        self.face_recognition_enabled.setChecked(False)
+
+        self.identity_confirmation_observations = QSpinBox()
+
+        self.identity_confirmation_observations.setRange(1, 10)
+
+        self.identity_confirmation_observations.setValue(3)
+
+        identity_confirmation_row = QHBoxLayout()
+
+        identity_confirmation_row.addWidget(QLabel("Strong matches to confirm"))
+
+        identity_confirmation_row.addStretch()
+
+        identity_confirmation_row.addWidget(self.identity_confirmation_observations)
+
         self.track_paths_enabled = QCheckBox("Show Track Paths")
 
         self.track_paths_enabled.setChecked(True)
@@ -562,6 +611,10 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self.person_enabled)
 
+        layout.addWidget(self.face_recognition_enabled)
+
+        layout.addLayout(identity_confirmation_row)
+
         layout.addWidget(self.intrusion_enabled)
 
         layout.addWidget(self.loitering_enabled)
@@ -571,6 +624,14 @@ class MainWindow(QMainWindow):
         self.fire_enabled.stateChanged.connect(self._analysis_configuration_changed)
 
         self.person_enabled.stateChanged.connect(self._analysis_configuration_changed)
+
+        self.face_recognition_enabled.stateChanged.connect(
+            self._analysis_configuration_changed
+        )
+
+        self.identity_confirmation_observations.valueChanged.connect(
+            self._analysis_configuration_changed
+        )
 
         self.intrusion_enabled.stateChanged.connect(
             self._analysis_configuration_changed
@@ -642,6 +703,12 @@ class MainWindow(QMainWindow):
         self.loitering_enabled.toggled.connect(self._update_dwell_controls)
 
         self.person_enabled.toggled.connect(self._update_dwell_controls)
+
+        self.person_enabled.toggled.connect(self._update_face_controls)
+
+        self.face_recognition_enabled.toggled.connect(self._update_face_controls)
+
+        self._update_face_controls()
 
         self.dwell_seconds.valueChanged.connect(self._analysis_configuration_changed)
 
@@ -741,6 +808,17 @@ class MainWindow(QMainWindow):
             person_enabled and self.loitering_enabled.isChecked()
         )
 
+    def _update_face_controls(
+        self,
+        *args,
+    ):
+        self.face_recognition_enabled.setEnabled(self.person_enabled.isChecked())
+
+        self.identity_confirmation_observations.setEnabled(
+            self.person_enabled.isChecked()
+            and self.face_recognition_enabled.isChecked()
+        )
+
     # ==========================================================
     # VIDEO PLAYER CONNECTION
     # ==========================================================
@@ -782,6 +860,8 @@ class MainWindow(QMainWindow):
 
         self.vision_request.connect(self._vision_worker.process)
 
+        self.face_registration_request.connect(self._vision_worker.register_face_images)
+
         self.vision_reset_request.connect(self._vision_worker.reset_runtime_state)
 
         self._vision_worker.result_ready.connect(self._vision_result_ready)
@@ -792,7 +872,58 @@ class MainWindow(QMainWindow):
 
         self._vision_worker.status_changed.connect(self.statusBar().showMessage)
 
+        self._vision_worker.face_registration_succeeded.connect(
+            self._face_registration_succeeded
+        )
+
+        self._vision_worker.face_registration_failed.connect(
+            self._face_registration_failed
+        )
+
         self._vision_thread.start()
+
+    def _register_face_images_clicked(self):
+        identity = self.face_identity_input.text().strip()
+
+        if not identity:
+            QMessageBox.warning(
+                self,
+                "Face registration",
+                "Enter an identity name first.",
+            )
+            return
+
+        image_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select face photos",
+            str(Path("data/face_registry")),
+            "Face images (*.jpg *.jpeg *.png)",
+        )
+
+        if not image_paths:
+            return
+
+        self.register_faces_button.setEnabled(False)
+        self.face_registration_status.setText(
+            f"Registering {len(image_paths)} image(s) for {identity}..."
+        )
+        self.face_registration_request.emit(identity, image_paths)
+
+    def _face_registration_succeeded(
+        self,
+        message: str,
+    ):
+        self.register_faces_button.setEnabled(True)
+        self.face_registration_status.setText(message)
+        self.statusBar().showMessage(message, 10000)
+
+    def _face_registration_failed(
+        self,
+        message: str,
+    ):
+        self.register_faces_button.setEnabled(True)
+        self.face_registration_status.setText("Registration failed.")
+        QMessageBox.warning(self, "Face registration failed", message)
 
     # ==========================================================
     # SHORTCUTS
@@ -983,6 +1114,13 @@ class MainWindow(QMainWindow):
         return VisionSettings(
             fire_enabled=(self.fire_enabled.isChecked()),
             person_enabled=(self.person_enabled.isChecked()),
+            face_recognition_enabled=(
+                self.face_recognition_enabled.isChecked()
+                and self.person_enabled.isChecked()
+            ),
+            identity_confirmation_observations=(
+                self.identity_confirmation_observations.value()
+            ),
             intrusion_enabled=(self.intrusion_enabled.isChecked()),
             loitering_enabled=(
                 self.loitering_enabled.isChecked() and self.person_enabled.isChecked()

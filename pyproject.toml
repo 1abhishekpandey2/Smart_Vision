@@ -5,8 +5,12 @@ description = "Transforms ordinary CCTV cameras into intelligent home safety ass
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "opencv-python",
-    "ultralytics",
+    "opencv-python>=5.0.0",
+    "numpy>=2.0.0",
+    "ultralytics==8.4.131",
+    "PyQt5",
+    "insightface==2.1.0",
+    "onnxruntime==1.31.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -14,6 +18,9 @@ include = ["app*"]
 
 [tool.pytest.ini_options]
 pythonpath = "."
+markers = [
+    "integration: requires local model weights or sample media",
+]
 
 [tool.black]
 line-length = 88

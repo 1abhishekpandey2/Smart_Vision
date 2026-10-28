@@ -4,6 +4,8 @@ import cv2
 import numpy as np
 from insightface.app import FaceAnalysis
 
+from app.recognition.association import FaceObservation
+
 
 class InsightFaceEmbedder:
     def __init__(self) -> None:
@@ -46,3 +48,31 @@ class InsightFaceEmbedder:
             embedding,
             dtype=np.float32,
         )
+
+    def detect_faces(
+        self,
+        image: np.ndarray,
+    ) -> list[FaceObservation]:
+        """Detect every face in a BGR frame and return its box and embedding."""
+
+        observations = []
+
+        for face in self._analyzer.get(image):
+            embedding = face.normed_embedding
+
+            if embedding is None:
+                continue
+
+            x1, y1, x2, y2 = (float(value) for value in face.bbox[:4])
+
+            observations.append(
+                FaceObservation(
+                    bounding_box=(x1, y1, x2, y2),
+                    embedding=np.asarray(
+                        embedding,
+                        dtype=np.float32,
+                    ),
+                )
+            )
+
+        return observations

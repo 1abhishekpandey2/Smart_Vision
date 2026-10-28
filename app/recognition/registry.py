@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 
 import numpy as np
 
@@ -40,17 +41,96 @@ class FaceRegistry:
             list[np.ndarray],
         ] = {}
 
+    @classmethod
+    def load(
+        cls,
+        path: Path,
+        candidate_threshold: float = 0.35,
+        strong_threshold: float = 0.50,
+    ) -> "FaceRegistry":
+        if not path.exists():
+            raise FileNotFoundError(f"Face registry not found: {path}")
+
+        registry = cls(
+            candidate_threshold=candidate_threshold,
+            strong_threshold=strong_threshold,
+        )
+
+        with np.load(
+            path,
+            allow_pickle=False,
+        ) as data:
+            identities = data["identities"]
+            embeddings = data["embeddings"]
+
+            if len(identities) != len(embeddings):
+                raise ValueError("Face registry data is inconsistent")
+
+            for identity, embedding in zip(
+                identities,
+                embeddings,
+                strict=True,
+            ):
+                registry.add_sample(
+                    identity=str(identity),
+                    embedding=embedding,
+                )
+
+        return registry
+
+    def save(
+        self,
+        path: Path,
+    ) -> None:
+        identities: list[str] = []
+        embeddings: list[np.ndarray] = []
+
+        for identity, samples in self._embeddings.items():
+            for sample in samples:
+                identities.append(identity)
+                embeddings.append(sample)
+
+        if not embeddings:
+            raise ValueError("Cannot save an empty face registry")
+
+        path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        np.savez_compressed(
+            path,
+            identities=np.asarray(
+                identities,
+                dtype=np.str_,
+            ),
+            embeddings=np.stack(embeddings).astype(np.float32),
+        )
+
     def add_sample(
         self,
         identity: str,
         embedding: np.ndarray,
-    ) -> None:
+    ) -> str:
         normalized = self._normalize(embedding)
+        identity = identity.strip()
+        identity_key = identity.casefold()
+
+        stored_identity = next(
+            (
+                existing_identity
+                for existing_identity in self._embeddings
+                if existing_identity.casefold() == identity_key
+            ),
+            identity,
+        )
 
         self._embeddings.setdefault(
-            identity,
+            stored_identity,
             [],
         ).append(normalized)
+
+        return stored_identity
 
     def match(
         self,

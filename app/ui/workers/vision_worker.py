@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 from PyQt5.QtCore import (
     QObject,
@@ -8,6 +9,8 @@ from PyQt5.QtCore import (
 
 from app.reasoning.dwell import DwellTracker
 from app.reasoning.temporal import TemporalPersistence
+from app.recognition.association import associate_faces_to_tracks
+from app.recognition.identity_memory import TrackIdentityMemory
 from app.tracking.history import TrackHistoryStore
 from app.ui.vision_types import (
     OverlayBox,
@@ -16,6 +19,7 @@ from app.ui.vision_types import (
     VisionResult,
 )
 from app.zones.polygon import PolygonZone
+from app.recognition.registry import FaceRegistry, MatchState
 
 
 class VisionWorker(QObject):
@@ -43,10 +47,15 @@ class VisionWorker(QObject):
 
     status_changed = pyqtSignal(str)
 
+    face_registration_succeeded = pyqtSignal(str)
+
+    face_registration_failed = pyqtSignal(str)
+
     def __init__(
         self,
         fire_model_path: str = "models/firedetect-11s.pt",
         person_model_path: str = "models/yolo26s.pt",
+        face_registry_path: str = "data/face_registry.npz",
         parent=None,
     ):
         super().__init__(parent)
@@ -58,6 +67,7 @@ class VisionWorker(QObject):
         self._fire_model_path = fire_model_path
 
         self._person_model_path = person_model_path
+        self._face_registry_path = Path(face_registry_path)
 
         # Models are loaded lazily.
         #
@@ -65,6 +75,9 @@ class VisionWorker(QObject):
         # because of the PyQt/PyTorch DLL loading behavior.
         self._fire_detector = None
         self._person_tracker = None
+        self._face_embedder = None
+        self._face_registry = None
+        self._identity_memory = TrackIdentityMemory()
 
         # Models run at a permissive base threshold.
         # The UI confidence threshold then filters the
@@ -190,6 +203,92 @@ class VisionWorker(QObject):
 
         self.status_changed.emit("Person Tracking model ready")
 
+    def _ensure_face_recognizer(
+        self,
+    ) -> None:
+        """Load face analysis and the saved gallery only when requested."""
+
+        if self._face_embedder is None or self._face_registry is None:
+            if not self._face_registry_path.exists():
+                raise FileNotFoundError(
+                    f"Face registry not found: {self._face_registry_path}"
+                )
+
+            self.status_changed.emit("Loading face recognition models...")
+
+            registry = FaceRegistry.load(self._face_registry_path)
+
+            from app.recognition.insightface_embedder import InsightFaceEmbedder
+
+            embedder = InsightFaceEmbedder()
+
+            self._face_registry = registry
+            self._face_embedder = embedder
+
+            self.status_changed.emit("Face recognition ready")
+
+    @pyqtSlot(str, object)
+    def register_face_images(
+        self,
+        identity: str,
+        image_paths,
+    ) -> None:
+        """Add one embedding per valid image and atomically save the gallery."""
+
+        identity = identity.strip()
+        paths = [Path(path) for path in image_paths]
+
+        if not identity:
+            self.face_registration_failed.emit(
+                "Enter an identity name before registering images."
+            )
+            return
+
+        if not paths:
+            self.face_registration_failed.emit("Select at least one face image.")
+            return
+
+        try:
+            embedder = self._face_embedder
+            if embedder is None:
+                from app.recognition.insightface_embedder import InsightFaceEmbedder
+
+                embedder = InsightFaceEmbedder()
+
+            # Compute every embedding before changing the gallery. If an image
+            # is invalid or contains multiple faces, the existing file stays intact.
+            embeddings = [embedder.embed_image(path) for path in paths]
+
+            if self._face_registry_path.exists():
+                registry = FaceRegistry.load(self._face_registry_path)
+            else:
+                registry = FaceRegistry()
+
+            stored_identity = identity
+            for embedding in embeddings:
+                stored_identity = registry.add_sample(identity, embedding)
+
+            temporary_path = self._face_registry_path.with_name(
+                f"{self._face_registry_path.stem}.tmp"
+                f"{self._face_registry_path.suffix}"
+            )
+
+            try:
+                registry.save(temporary_path)
+                os.replace(temporary_path, self._face_registry_path)
+            finally:
+                temporary_path.unlink(missing_ok=True)
+
+            self._face_embedder = embedder
+            self._face_registry = registry
+            self._identity_memory.reset()
+
+            self.face_registration_succeeded.emit(
+                f"Registered {len(embeddings)} image(s) for '{stored_identity}'."
+            )
+        except Exception as exc:
+            self.face_registration_failed.emit(str(exc))
+
     # ==========================================================
     # RUNTIME RESET
     # ==========================================================
@@ -228,6 +327,7 @@ class VisionWorker(QObject):
 
         self._zone_signature = None
         self._dwell_tracker.reset()
+        self._identity_memory.reset()
 
         # ------------------------------------------------------
         # BYTETRACK
@@ -475,6 +575,52 @@ class VisionWorker(QObject):
                     if (track.confidence >= settings.person_confidence)
                 ]
 
+                face_matches = {}
+
+                if settings.face_recognition_enabled and tracks:
+                    self._ensure_face_recognizer()
+
+                    face_observations = self._face_embedder.detect_faces(frame.image)
+
+                    associated_faces = associate_faces_to_tracks(
+                        face_observations,
+                        tracks,
+                    )
+
+                    face_matches = {
+                        track_id: self._face_registry.match(face.embedding)
+                        for track_id, face in associated_faces.items()
+                    }
+
+                if settings.face_recognition_enabled:
+                    if (
+                        self._identity_memory.required_observations
+                        != settings.identity_confirmation_observations
+                    ):
+                        self._identity_memory = TrackIdentityMemory(
+                            required_observations=(
+                                settings.identity_confirmation_observations
+                            ),
+                        )
+
+                    strong_identities = {
+                        track_id: match.identity
+                        for track_id, match in face_matches.items()
+                        if (
+                            match.state is MatchState.STRONG_MATCH
+                            and match.identity is not None
+                        )
+                    }
+
+                    remembered_identities = self._identity_memory.update(
+                        now_seconds=request.source_time_seconds,
+                        active_track_ids={track.track_id for track in tracks},
+                        strong_identities=strong_identities,
+                    )
+                else:
+                    self._identity_memory.reset()
+                    remembered_identities = {}
+
                 people_count = len(tracks)
                 zone_reasoning_enabled = (
                     settings.intrusion_enabled or settings.loitering_enabled
@@ -662,6 +808,42 @@ class VisionWorker(QObject):
 
                         person_label += " | LOITERING"
 
+                    face_match = face_matches.get(track.track_id)
+                    remembered_identity = remembered_identities.get(track.track_id)
+
+                    if remembered_identity is not None:
+                        person_label += f" | Identity: {remembered_identity}"
+                    elif face_match is not None:
+                        if face_match.state is MatchState.STRONG_MATCH:
+                            person_label += (
+                                f" | Face: {face_match.identity}"
+                                f" {face_match.similarity:.2f}"
+                            )
+
+                            if face_match.identity is not None:
+                                progress = self._identity_memory.confirmation_progress(
+                                    track.track_id,
+                                    face_match.identity,
+                                )
+
+                                if progress is not None:
+                                    observed, required = progress
+                                    person_label += (
+                                        f" | Confirming {observed}/{required}"
+                                    )
+                        elif face_match.state is MatchState.CANDIDATE:
+                            person_label += (
+                                f" | Candidate: {face_match.identity}"
+                                f" {face_match.similarity:.2f}"
+                            )
+                        else:
+                            similarity_text = (
+                                f" {face_match.similarity:.2f}"
+                                if face_match.similarity is not None
+                                else ""
+                            )
+                            person_label += f" | Unknown face{similarity_text}"
+
                     person_alert = settings.intrusion_enabled and inside_zone
 
                     if dwell_state is not None and dwell_state.is_loitering:
@@ -693,6 +875,8 @@ class VisionWorker(QObject):
                 self._history_store.clear()
 
                 self._dwell_tracker.reset()
+
+                self._identity_memory.reset()
 
             # ==================================================
             # CREATE RESULT

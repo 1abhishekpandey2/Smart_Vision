@@ -10,6 +10,8 @@ BoundingBox = tuple[int, int, int, int]
 class VisionSettings:
     fire_enabled: bool
     person_enabled: bool
+    face_recognition_enabled: bool
+    identity_confirmation_observations: int
     intrusion_enabled: bool
 
     loitering_enabled: bool

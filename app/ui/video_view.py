@@ -50,6 +50,7 @@ class VideoCanvas(QWidget):
         self.setMouseTracking(True)
 
         self._pixmap: QPixmap | None = None
+        self._source_image: np.ndarray | None = None
 
         self._source_width = 0
         self._source_height = 0
@@ -148,49 +149,13 @@ class VideoCanvas(QWidget):
         if image is None:
             return
 
-        if image.ndim == 3 and image.shape[2] == 3:
-            rgb = cv2.cvtColor(
-                image,
-                cv2.COLOR_BGR2RGB,
-            )
-
-            rgb = np.ascontiguousarray(rgb)
-
-            height, width, channels = rgb.shape
-
-            bytes_per_line = channels * width
-
-            qimage = QImage(
-                rgb.data,
-                width,
-                height,
-                bytes_per_line,
-                QImage.Format_RGB888,
-            ).copy()
-
-        elif image.ndim == 2:
-            gray = np.ascontiguousarray(image)
-
-            height, width = gray.shape
-
-            qimage = QImage(
-                gray.data,
-                width,
-                height,
-                width,
-                QImage.Format_Grayscale8,
-            ).copy()
-
-        else:
+        if image.ndim not in (2, 3):
             return
 
-        self._source_width = width
-        self._source_height = height
-
-        self._pixmap = QPixmap.fromImage(qimage)
-
+        self._source_image = np.ascontiguousarray(image).copy()
         self._message = ""
 
+        self._refresh_frame_pixmap()
         self.update()
 
     def set_message(
@@ -198,6 +163,7 @@ class VideoCanvas(QWidget):
         message: str,
     ) -> None:
         self._pixmap = None
+        self._source_image = None
         self._message = message
         self._overlays = ()
 
@@ -213,6 +179,7 @@ class VideoCanvas(QWidget):
     ) -> None:
         self._overlays = tuple(overlays)
 
+        self._refresh_frame_pixmap()
         self.update()
 
     def clear_overlays(self) -> None:
@@ -221,7 +188,134 @@ class VideoCanvas(QWidget):
 
         self._zone_active = False
 
+        self._refresh_frame_pixmap()
         self.update()
+
+    def _refresh_frame_pixmap(self) -> None:
+        if self._source_image is None:
+            return
+
+        image = self._source_image.copy()
+        if image.ndim == 2:
+            if self._overlays:
+                image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+            else:
+                height, width = image.shape
+                qimage = QImage(
+                    image.data,
+                    width,
+                    height,
+                    width,
+                    QImage.Format_Grayscale8,
+                ).copy()
+                self._source_width = width
+                self._source_height = height
+                self._pixmap = QPixmap.fromImage(qimage)
+                return
+
+        if image.ndim != 3 or image.shape[2] != 3:
+            return
+
+        height, width, _ = image.shape
+        self._source_width = width
+        self._source_height = height
+        display_scale = min(
+            self.width() / max(width, 1),
+            self.height() / max(height, 1),
+        )
+        font_scale = min(
+            3.0,
+            max(0.4, 18 / max(30 * display_scale, 1)),
+        )
+        thickness = max(1, round(font_scale * 2))
+        placed_labels = []
+
+        for overlay in self._overlays:
+            x1, y1, _, _ = overlay.bounding_box
+            color = (
+                (70, 70, 255)
+                if overlay.alert or overlay.kind == "fire"
+                else (205, 195, 190) if overlay.kind == "smoke" else (120, 220, 60)
+            )
+            (text_width, text_height), baseline = cv2.getTextSize(
+                overlay.label,
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                thickness,
+            )
+            padding_x = 6
+            padding_y = 4
+            label_width = text_width + padding_x * 2
+            label_height = text_height + baseline + padding_y * 2
+            label_x = min(max(x1, 0), max(width - label_width, 0))
+            preferred_y = y1 - label_height - 3
+            if preferred_y < 0:
+                preferred_y = min(y1 + 3, max(height - label_height, 0))
+
+            label_positions = [preferred_y]
+            row_step = label_height + 3
+            max_rows = height // row_step
+            label_positions.extend(
+                preferred_y + row * row_step
+                for row in range(1, max_rows + 1)
+                if preferred_y + row * row_step + label_height <= height
+            )
+            label_positions.extend(
+                preferred_y - row * row_step
+                for row in range(1, max_rows + 1)
+                if preferred_y - row * row_step >= 0
+            )
+
+            label_y = next(
+                (
+                    candidate_y
+                    for candidate_y in label_positions
+                    if not any(
+                        label_x < old_x + old_width
+                        and label_x + label_width > old_x
+                        and candidate_y < old_y + old_height
+                        and candidate_y + label_height > old_y
+                        for old_x, old_y, old_width, old_height in placed_labels
+                    )
+                ),
+                preferred_y,
+            )
+            placed_labels.append((label_x, label_y, label_width, label_height))
+
+            cv2.rectangle(
+                image,
+                (label_x, label_y),
+                (label_x + label_width, label_y + label_height),
+                (5, 9, 14),
+                thickness=cv2.FILLED,
+            )
+            cv2.rectangle(
+                image,
+                (label_x, label_y),
+                (label_x + label_width, label_y + label_height),
+                color,
+                thickness=1,
+            )
+            cv2.putText(
+                image,
+                overlay.label,
+                (label_x + padding_x, label_y + padding_y + text_height),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                (255, 255, 255),
+                thickness,
+                cv2.LINE_AA,
+            )
+
+        rgb = np.ascontiguousarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        qimage = QImage(
+            rgb.data,
+            width,
+            height,
+            3 * width,
+            QImage.Format_RGB888,
+        ).copy()
+        self._pixmap = QPixmap.fromImage(qimage)
 
     # ==========================================================
     # ZONE
@@ -683,17 +777,6 @@ class VideoCanvas(QWidget):
                     top_left,
                     bottom_right,
                 )
-            )
-
-            text_y = max(
-                top_left.y() - 7,
-                18,
-            )
-
-            painter.drawText(
-                top_left.x(),
-                text_y,
-                overlay.label,
             )
 
 

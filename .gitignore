@@ -34,13 +34,18 @@ weights/
 # Python package metadata
 *.egg-info/
 
-data/videos/*.mp4
+data/videos/
 
 # Local face-recognition development data
 data/face_test/
 data/face_eval/
 data/face_registry/
 data/face_queries/
+
+# Local datasets, generated outputs, and identity-labeled experiment records
+data/records/
+data/samples/
+docs/research/face_query_visual_check.png
 
 # Generated face-recognition registries
 data/*.npz
