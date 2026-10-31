@@ -41,6 +41,18 @@ class FaceRegistry:
             list[np.ndarray],
         ] = {}
 
+    @property
+    def identity_sample_counts(self) -> tuple[tuple[str, int], ...]:
+        return tuple(
+            sorted(
+                (
+                    (identity, len(samples))
+                    for identity, samples in self._embeddings.items()
+                ),
+                key=lambda item: item[0].casefold(),
+            )
+        )
+
     @classmethod
     def load(
         cls,

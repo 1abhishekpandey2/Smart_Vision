@@ -152,6 +152,7 @@ These measures need frame or episode denominators and known ground truth before 
 **Status:** UI and worker workflow implemented on 2026-10-28; actual user photo registration not yet performed through the visible app.
 
 - The Sources panel includes an identity-name field and a multi-image selector for JPG/JPEG/PNG files.
+- **View Registered People** lists each identity with its embedding count; a row-level **Add Images** action appends to that identity.
 - Each selected image uses `InsightFaceEmbedder.embed_image`, which rejects unreadable images, zero faces, and multiple faces. The selected batch is all-or-nothing: all embeddings are computed before the gallery is changed.
 - The worker loads the current `data/face_registry.npz` when present, appends samples under the entered identity (case-insensitively; the first stored spelling is preserved), writes a temporary NPZ, then atomically replaces the target. On success it refreshes its cached gallery and clears track identity memory. The user’s current gallery was not changed during checks.
 - Tests: full `pytest -q --basetemp=data/.pytest-run-full` passed, **51 passed** (Python 3.13.5); `ruff check` on changed UI/worker/registration-test files passed; offscreen `MainWindow` construction confirmed the registration widgets instantiate.
@@ -211,3 +212,25 @@ Copy this section for each actual comparison or test.
 - Black: formatted the repository's 66 Python source, script, and test files; a Black-engine comparison then confirmed all 66 match the configured formatting.
 - Privacy boundary for the Git update: identity-labeled raw comparisons, local sample/video data, the face-result image, and the NPZ face gallery are excluded from the repository. Participant names in this log are anonymized.
 - Limits: these checks establish code health for this checkout, not detection accuracy, operational reliability, or general face-recognition performance.
+
+## 2026-10-28 — Registered-people gallery manager check
+
+**Status:** observed UI data-flow check with synthetic identities; not a face-recognition performance experiment.
+
+- The Sources panel now opens a registered-people dialog. Each row shows the saved identity, number of embeddings, and an **Add Images** action that routes through the existing append-and-save worker path.
+- Synthetic gallery: `Alex` with two embeddings entered using case variants, and `Zoe` with one. The worker returned `Alex: 2`, `Zoe: 1`; the dialog created two rows and two per-person buttons without initializing InsightFace.
+- The test used a temporary NPZ under `data/`, which was removed. The user's actual registry was not read or modified.
+- Verification: full `pytest -q` — **56 passed**; `ruff check .` passed; Black check passed for all 66 Python files.
+- Visual limitation and correction: the offscreen Qt screenshot contained row widgets but did not render Qt text. The user then reported white-on-light names in the normal app. The dialog and row now use explicit dark backgrounds, bright identity text, and gray sample-count text; a style-property check confirmed these settings. Normal desktop appearance still needs the user's confirmation.
+
+## 2026-10-28 — Guided live face registration implementation
+
+**Status:** implementation and automated software checks; no live-camera run or recognition-accuracy experiment yet.
+
+- The Sources panel now offers **Register from Camera** for the active Webcam 0 stream. It displays the stream in a circular preview and guides five user-directed views: front, slight left, slight right, chin up, and chin down.
+- For each requested view, the user presses **Capture this view**. The vision worker checks that exactly one face is detected and returns its normalized embedding. On completion of all five prompts, the worker appends those vectors to the NPZ gallery with the existing case-insensitive identity behavior and atomic file replacement.
+- Captured camera frames are processed in memory and are not saved as image files. The live-registration action activates Webcam 0 through the existing source flow if it is not already active.
+- Pose achievement is not yet estimated from landmarks; instructions are user-guided and capture is button-triggered, not automatic. No claim is made that five views improve recognition accuracy; that requires a controlled comparison.
+- Code revision: base `9471de2` plus the uncommitted gallery-manager changes and this implementation.
+- Verification: full project virtual-environment suite — **59 passed**; `ruff check .` and Ruff format checks passed; `git diff --check` passed. An offscreen Qt smoke check rendered the circular dialog, confirmed the capture button enables on frame receipt, and confirmed a capture advances the prompt. No physical webcam or InsightFace live inference was exercised in this check.
+- Pending user verification: open the application, start live registration for a test identity, complete all five prompts, confirm the gallery count increases by five, and check that the captured images themselves were not written to disk.

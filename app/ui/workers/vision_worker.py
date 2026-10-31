@@ -51,6 +51,14 @@ class VisionWorker(QObject):
 
     face_registration_failed = pyqtSignal(str)
 
+    face_gallery_ready = pyqtSignal(object)
+
+    face_gallery_failed = pyqtSignal(str)
+
+    face_capture_sample_ready = pyqtSignal(object)
+
+    face_capture_sample_failed = pyqtSignal(str)
+
     def __init__(
         self,
         fire_model_path: str = "models/firedetect-11s.pt",
@@ -158,7 +166,7 @@ class VisionWorker(QObject):
         model_path = Path(self._fire_model_path)
 
         if not model_path.exists():
-            raise FileNotFoundError("Fire model not found: " f"{model_path}")
+            raise FileNotFoundError(f"Fire model not found: {model_path}")
 
         self.status_changed.emit("Loading Fire/Smoke model...")
 
@@ -189,7 +197,7 @@ class VisionWorker(QObject):
         model_path = Path(self._person_model_path)
 
         if not model_path.exists():
-            raise FileNotFoundError("Person model not found: " f"{model_path}")
+            raise FileNotFoundError(f"Person model not found: {model_path}")
 
         self.status_changed.emit("Loading Person Tracking model...")
 
@@ -268,16 +276,7 @@ class VisionWorker(QObject):
             for embedding in embeddings:
                 stored_identity = registry.add_sample(identity, embedding)
 
-            temporary_path = self._face_registry_path.with_name(
-                f"{self._face_registry_path.stem}.tmp"
-                f"{self._face_registry_path.suffix}"
-            )
-
-            try:
-                registry.save(temporary_path)
-                os.replace(temporary_path, self._face_registry_path)
-            finally:
-                temporary_path.unlink(missing_ok=True)
+            self._save_face_registry_atomically(registry)
 
             self._face_embedder = embedder
             self._face_registry = registry
@@ -288,6 +287,82 @@ class VisionWorker(QObject):
             )
         except Exception as exc:
             self.face_registration_failed.emit(str(exc))
+
+    @pyqtSlot(object)
+    def capture_face_embedding(self, image) -> None:
+        """Extract one face embedding from a live BGR camera frame."""
+
+        try:
+            if self._face_embedder is None:
+                from app.recognition.insightface_embedder import InsightFaceEmbedder
+
+                self._face_embedder = InsightFaceEmbedder()
+
+            faces = self._face_embedder.detect_faces(image)
+            if len(faces) != 1:
+                raise ValueError(
+                    "Keep exactly one face in the camera view before capturing."
+                )
+
+            self.face_capture_sample_ready.emit(faces[0].embedding.copy())
+        except Exception as exc:
+            self.face_capture_sample_failed.emit(str(exc))
+
+    @pyqtSlot(str, object)
+    def register_face_embeddings(self, identity: str, embeddings) -> None:
+        """Append captured embeddings directly to the persistent NPZ gallery."""
+
+        identity = identity.strip()
+        embeddings = list(embeddings)
+        if not identity:
+            self.face_registration_failed.emit("Enter an identity name first.")
+            return
+        if not embeddings:
+            self.face_registration_failed.emit("Capture at least one face sample.")
+            return
+
+        try:
+            registry = (
+                FaceRegistry.load(self._face_registry_path)
+                if self._face_registry_path.exists()
+                else FaceRegistry()
+            )
+            stored_identity = identity
+            for embedding in embeddings:
+                stored_identity = registry.add_sample(identity, embedding)
+
+            self._save_face_registry_atomically(registry)
+            self._face_registry = registry
+            self._identity_memory.reset()
+            self.face_registration_succeeded.emit(
+                f"Registered {len(embeddings)} live sample(s) for '{stored_identity}'."
+            )
+        except Exception as exc:
+            self.face_registration_failed.emit(str(exc))
+
+    def _save_face_registry_atomically(self, registry: FaceRegistry) -> None:
+        temporary_path = self._face_registry_path.with_name(
+            f"{self._face_registry_path.stem}.tmp{self._face_registry_path.suffix}"
+        )
+        try:
+            registry.save(temporary_path)
+            os.replace(temporary_path, self._face_registry_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+
+    @pyqtSlot()
+    def load_face_gallery(self) -> None:
+        """Return saved identities and sample counts without loading models."""
+
+        if not self._face_registry_path.exists():
+            self.face_gallery_ready.emit(())
+            return
+
+        try:
+            registry = FaceRegistry.load(self._face_registry_path)
+            self.face_gallery_ready.emit(registry.identity_sample_counts)
+        except Exception as exc:
+            self.face_gallery_failed.emit(str(exc))
 
     # ==========================================================
     # RUNTIME RESET
@@ -338,7 +413,6 @@ class VisionWorker(QObject):
         #
         # If this version exposes tracker.reset(), reset it too.
         if self._person_tracker is not None:
-
             model = getattr(
                 self._person_tracker,
                 "_model",
@@ -358,9 +432,7 @@ class VisionWorker(QObject):
             )
 
             if trackers:
-
                 for tracker in trackers:
-
                     reset_method = getattr(
                         tracker,
                         "reset",
@@ -411,7 +483,6 @@ class VisionWorker(QObject):
             # ==================================================
 
             if settings.fire_enabled:
-
                 self._ensure_fire_detector()
 
                 raw_detections = self._fire_detector.detect(frame)
@@ -428,7 +499,6 @@ class VisionWorker(QObject):
                 # ----------------------------------------------
 
                 for detection in detections:
-
                     overlays.append(
                         OverlayBox(
                             bounding_box=(detection.bounding_box),
@@ -455,7 +525,6 @@ class VisionWorker(QObject):
 
                 # False -> True
                 if fire_confirmed and not self._previous_fire_confirmed:
-
                     events.append(
                         VisionEvent(
                             timestamp=(frame.timestamp),
@@ -466,7 +535,6 @@ class VisionWorker(QObject):
 
                 # True -> False
                 elif self._previous_fire_confirmed and not fire_confirmed:
-
                     events.append(
                         VisionEvent(
                             timestamp=(frame.timestamp),
@@ -488,23 +556,18 @@ class VisionWorker(QObject):
                 window_size = self._fire_temporal.window_size
 
                 if observation_count < window_size:
-
-                    fire_evidence = f"{positive_count}/" f"{window_size} " f"WARMING"
+                    fire_evidence = f"{positive_count}/{window_size} WARMING"
 
                 elif fire_confirmed:
-
-                    fire_evidence = f"{positive_count}/" f"{window_size} " f"CONFIRMED"
+                    fire_evidence = f"{positive_count}/{window_size} CONFIRMED"
 
                 elif positive_count > 0:
-
-                    fire_evidence = f"{positive_count}/" f"{window_size} " f"POSSIBLE"
+                    fire_evidence = f"{positive_count}/{window_size} POSSIBLE"
 
                 else:
-
                     fire_evidence = f"0/{window_size}"
 
             else:
-
                 self._fire_temporal.reset()
 
                 self._previous_fire_confirmed = False
@@ -530,7 +593,6 @@ class VisionWorker(QObject):
             # --------------------------------------------------
 
             if zone_signature != self._zone_signature:
-
                 # The old inside/outside state no longer has
                 # meaning because the geometry changed.
                 self._previous_inside.clear()
@@ -545,7 +607,6 @@ class VisionWorker(QObject):
             zone = None
 
             if len(zone_signature) >= 3:
-
                 height, width = frame.image.shape[:2]
 
                 pixel_points = [
@@ -563,7 +624,6 @@ class VisionWorker(QObject):
             # ==================================================
 
             if settings.person_enabled:
-
                 self._ensure_person_tracker()
 
                 raw_tracks = self._person_tracker.track(frame)
@@ -632,7 +692,6 @@ class VisionWorker(QObject):
                 # If intrusion monitoring is disabled,
                 # nobody should remain marked as an intruder.
                 if not settings.intrusion_enabled:
-
                     self._previous_inside.clear()
 
                     self._active_intrusion_ids.clear()
@@ -642,7 +701,6 @@ class VisionWorker(QObject):
                 # ==============================================
 
                 for track in tracks:
-
                     # ------------------------------------------
                     # TRACK POSITION
                     # ------------------------------------------
@@ -670,11 +728,9 @@ class VisionWorker(QObject):
                         inside_zone = zone.contains(ground_point)
 
                         if inside_zone:
-
                             inside_zone_count += 1
 
                     if zone is not None and settings.intrusion_enabled:
-
                         previous_inside = self._previous_inside.get(track.track_id)
                         # ======================================
                         # ENTRY
@@ -683,7 +739,6 @@ class VisionWorker(QObject):
                         # ======================================
 
                         if previous_inside is False and inside_zone:
-
                             # Mark this tracked person as an
                             # ACTIVE intrusion.
                             #
@@ -696,7 +751,7 @@ class VisionWorker(QObject):
                                     timestamp=(frame.timestamp),
                                     event_type=("INTRUSION"),
                                     description=(
-                                        f"Person " f"#{track.track_id} " f"entered zone"
+                                        f"Person #{track.track_id} entered zone"
                                     ),
                                 )
                             )
@@ -708,7 +763,6 @@ class VisionWorker(QObject):
                         # ======================================
 
                         elif previous_inside is True and not inside_zone:
-
                             # Stop displaying intrusion path.
                             self._active_intrusion_ids.discard(track.track_id)
 
@@ -717,7 +771,7 @@ class VisionWorker(QObject):
                                     timestamp=(frame.timestamp),
                                     event_type="EXIT",
                                     description=(
-                                        f"Person " f"#{track.track_id} " f"exited zone"
+                                        f"Person #{track.track_id} exited zone"
                                     ),
                                 )
                             )
@@ -731,7 +785,6 @@ class VisionWorker(QObject):
                     dwell_state = None
 
                     if settings.loitering_enabled:
-
                         dwell_state = self._dwell_tracker.observe(
                             track_id=track.track_id,
                             inside_zone=inside_zone,
@@ -740,11 +793,9 @@ class VisionWorker(QObject):
                         )
 
                         if dwell_state.is_loitering:
-
                             loitering_count += 1
 
                         if dwell_state.just_triggered:
-
                             events.append(
                                 VisionEvent(
                                     timestamp=(frame.timestamp),
@@ -777,11 +828,9 @@ class VisionWorker(QObject):
                         settings.show_track_paths
                         and track.track_id in self._active_intrusion_ids
                     ):
-
                         history = self._history_store.get(track.track_id)
 
                         if len(history) >= 2:
-
                             track_paths.append(
                                 TrackPath(
                                     track_id=(track.track_id),
@@ -794,18 +843,12 @@ class VisionWorker(QObject):
                     # PERSON BOX
                     # ==========================================
 
-                    person_label = (
-                        f"Person " f"#{track.track_id} " f"{track.confidence:.0%}"
-                    )
+                    person_label = f"Person #{track.track_id} {track.confidence:.0%}"
 
                     if dwell_state is not None and inside_zone:
-
-                        person_label += (
-                            f" | Dwell " f"{dwell_state.elapsed_seconds:.1f}s"
-                        )
+                        person_label += f" | Dwell {dwell_state.elapsed_seconds:.1f}s"
 
                     if dwell_state is not None and dwell_state.is_loitering:
-
                         person_label += " | LOITERING"
 
                     face_match = face_matches.get(track.track_id)
@@ -847,7 +890,6 @@ class VisionWorker(QObject):
                     person_alert = settings.intrusion_enabled and inside_zone
 
                     if dwell_state is not None and dwell_state.is_loitering:
-
                         person_alert = True
 
                     overlays.append(
@@ -864,7 +906,6 @@ class VisionWorker(QObject):
                 ) or loitering_count > 0
 
             else:
-
                 # Person tracking switched OFF.
                 #
                 # Previous person states are no longer valid.
@@ -902,13 +943,11 @@ class VisionWorker(QObject):
         # ======================================================
 
         except Exception as exc:
-
-            self.error_occurred.emit("Vision processing error: " f"{exc}")
+            self.error_occurred.emit(f"Vision processing error: {exc}")
 
         # ======================================================
         # ALWAYS SIGNAL COMPLETION
         # ======================================================
 
         finally:
-
             self.analysis_finished.emit()

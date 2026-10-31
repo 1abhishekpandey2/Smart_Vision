@@ -1223,6 +1223,10 @@ gallery is private local data and is not committed to Git.
    photos. Each photo must contain exactly one detectable face.
 4. Wait for the registration status message before closing the app.
 
+Select **View Registered People** to see each saved identity and its sample
+count. The **Add Images** button beside a name appends photos to that identity;
+the gallery treats names case-insensitively and keeps the original spelling.
+
 Smart Vision computes all selected image embeddings before saving. If any
 selected image cannot be read or does not contain exactly one face, the batch
 fails without replacing the existing gallery. Successful registration adds
@@ -1243,6 +1247,22 @@ append images to an existing gallery.
 The `.npz` gallery contains biometric embeddings. It is excluded by
 `.gitignore`; back it up privately if you need to move it to another machine.
 Do not commit face photos or the gallery.
+
+### Register from the webcam
+
+1. Enter the identity name and select **Register from Camera**. The app opens
+   Webcam 0 if it is not already active.
+2. Follow the five prompts in the circular preview: straight, slight left,
+   slight right, chin up, and chin down. Press **Capture this view** for each
+   prompt. The worker accepts a frame only when it detects exactly one face.
+3. After all five samples pass validation, Smart Vision appends their embeddings
+   directly to the NPZ gallery. The captured camera frames are not saved as
+   photo files.
+
+The prompts are currently user-guided: the application does not yet verify that
+the requested head pose was achieved or capture it automatically. The five
+samples are useful as varied registration inputs, but their effect on matching
+accuracy has not yet been measured.
 
 ## Show identities in video
 

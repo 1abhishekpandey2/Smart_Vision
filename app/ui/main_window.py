@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
@@ -22,6 +23,7 @@ from PyQt5.QtWidgets import (
     QHeaderView,
     QLabel,
     QListWidget,
+    QListWidgetItem,
     QLineEdit,
     QMainWindow,
     QMessageBox,
@@ -36,6 +38,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from app.ui.face_registration_dialog import FaceRegistrationDialog
 from app.ui.webcam_controller import WebcamController
 
 from app.ui.seek_slider import SeekSlider
@@ -60,6 +63,12 @@ class MainWindow(QMainWindow):
     vision_reset_request = pyqtSignal()
 
     face_registration_request = pyqtSignal(str, object)
+
+    face_gallery_request = pyqtSignal()
+
+    face_capture_request = pyqtSignal(object)
+
+    face_embedding_registration_request = pyqtSignal(str, object)
 
     def __init__(self):
         super().__init__()
@@ -91,6 +100,12 @@ class MainWindow(QMainWindow):
         self._pending_analysis = None
 
         self._active_source_kind = None
+        self._face_gallery_dialog = None
+        self._face_gallery_list = None
+        self._face_gallery_add_buttons = []
+        self._face_registration_busy = False
+        self._live_face_dialog = None
+        self._live_face_session_active = False
 
         # Create before building widgets because
         # QComboBox signals can fire during construction.
@@ -325,6 +340,17 @@ class MainWindow(QMainWindow):
         self.register_faces_button.clicked.connect(self._register_face_images_clicked)
 
         layout.addWidget(self.register_faces_button)
+
+        self.live_face_registration_button = QPushButton("Register from Camera")
+        self.live_face_registration_button.clicked.connect(
+            self._start_live_face_registration
+        )
+        layout.addWidget(self.live_face_registration_button)
+
+        self.view_face_gallery_button = QPushButton("View Registered People")
+        self.view_face_gallery_button.clicked.connect(self._show_face_gallery_clicked)
+
+        layout.addWidget(self.view_face_gallery_button)
 
         self.face_registration_status = QLabel(
             "Choose photos with exactly one face each."
@@ -862,6 +888,14 @@ class MainWindow(QMainWindow):
 
         self.face_registration_request.connect(self._vision_worker.register_face_images)
 
+        self.face_gallery_request.connect(self._vision_worker.load_face_gallery)
+
+        self.face_capture_request.connect(self._vision_worker.capture_face_embedding)
+
+        self.face_embedding_registration_request.connect(
+            self._vision_worker.register_face_embeddings
+        )
+
         self.vision_reset_request.connect(self._vision_worker.reset_runtime_state)
 
         self._vision_worker.result_ready.connect(self._vision_result_ready)
@@ -880,9 +914,24 @@ class MainWindow(QMainWindow):
             self._face_registration_failed
         )
 
+        self._vision_worker.face_gallery_ready.connect(self._face_gallery_loaded)
+
+        self._vision_worker.face_gallery_failed.connect(self._face_gallery_failed)
+
+        self._vision_worker.face_capture_sample_ready.connect(
+            self._live_face_sample_ready
+        )
+
+        self._vision_worker.face_capture_sample_failed.connect(
+            self._live_face_sample_failed
+        )
+
         self._vision_thread.start()
 
     def _register_face_images_clicked(self):
+        if self._face_registration_busy or self._live_face_session_active:
+            return
+
         identity = self.face_identity_input.text().strip()
 
         if not identity:
@@ -903,25 +952,246 @@ class MainWindow(QMainWindow):
         if not image_paths:
             return
 
-        self.register_faces_button.setEnabled(False)
+        self._begin_face_registration(identity, image_paths)
+
+    def _start_live_face_registration(self) -> None:
+        if self._live_face_session_active:
+            self._live_face_dialog.raise_()
+            return
+        if self._face_registration_busy:
+            return
+        identity = self.face_identity_input.text().strip()
+        if not identity:
+            QMessageBox.warning(
+                self,
+                "Face registration",
+                "Enter an identity name first.",
+            )
+            return
+
+        if (
+            self._active_source_kind != "webcam"
+            or not self.webcam_controller.has_source
+        ):
+            self._source_clicked(self.source_list.item(0))
+        if not self.webcam_controller.has_source:
+            return
+
+        dialog = FaceRegistrationDialog(identity, self)
+        dialog.capture_requested.connect(self._begin_live_sample_check)
+        dialog.registration_requested.connect(self._begin_live_embedding_registration)
+        self._vision_worker.face_registration_succeeded.connect(
+            dialog.registration_succeeded
+        )
+        self._vision_worker.face_registration_failed.connect(dialog.registration_failed)
+        dialog.finished.connect(
+            lambda _result, target=dialog: self._disconnect_live_face_dialog(target)
+        )
+        self._live_face_dialog = dialog
+        self._live_face_session_active = True
+        self._set_face_registration_controls_enabled(False)
+        dialog.show()
+        if self._last_frame is not None:
+            dialog.set_frame(self._last_frame.image)
+
+    def _begin_live_embedding_registration(self, identity, embeddings) -> None:
+        if self._face_registration_busy:
+            return
+        self._face_registration_busy = True
+        self._set_face_registration_controls_enabled(False)
+        self.live_face_registration_button.setEnabled(False)
+        self.face_registration_status.setText(
+            f"Saving {len(embeddings)} live face sample(s) for {identity}..."
+        )
+        self.face_embedding_registration_request.emit(identity, embeddings)
+
+    def _begin_live_sample_check(self, image) -> None:
+        self._face_registration_busy = True
+        self._set_face_registration_controls_enabled(False)
+        self.live_face_registration_button.setEnabled(False)
+        self.face_capture_request.emit(image)
+
+    def _live_face_sample_ready(self, embedding) -> None:
+        self._face_registration_busy = False
+        self._set_face_registration_controls_enabled(True)
+        if self._live_face_dialog is not None:
+            self._live_face_dialog.add_sample(embedding)
+
+    def _live_face_sample_failed(self, message: str) -> None:
+        self._face_registration_busy = False
+        self._set_face_registration_controls_enabled(True)
+        if self._live_face_dialog is not None:
+            self._live_face_dialog.show_capture_error(message)
+
+    def _disconnect_live_face_dialog(self, dialog) -> None:
+        try:
+            self._vision_worker.face_registration_succeeded.disconnect(
+                dialog.registration_succeeded
+            )
+            self._vision_worker.face_registration_failed.disconnect(
+                dialog.registration_failed
+            )
+        except TypeError:
+            pass
+        if self._live_face_dialog is dialog:
+            self._live_face_dialog = None
+            self._live_face_session_active = False
+            self._set_face_registration_controls_enabled(
+                enabled=not self._face_registration_busy
+            )
+
+    def _begin_face_registration(self, identity, image_paths) -> None:
+        self._face_registration_busy = True
+        self._set_face_registration_controls_enabled(False)
         self.face_registration_status.setText(
             f"Registering {len(image_paths)} image(s) for {identity}..."
         )
         self.face_registration_request.emit(identity, image_paths)
 
+    def _set_face_registration_controls_enabled(self, enabled: bool) -> None:
+        enabled = enabled and not self._live_face_session_active
+        self.register_faces_button.setEnabled(enabled)
+        self.live_face_registration_button.setEnabled(enabled)
+        for button in self._face_gallery_add_buttons:
+            button.setEnabled(enabled)
+
+    def _show_face_gallery_clicked(self) -> None:
+        if self._face_gallery_dialog is None:
+            self._create_face_gallery_dialog()
+
+        self._face_gallery_dialog.show()
+        self._face_gallery_dialog.raise_()
+        self._refresh_face_gallery()
+
+    def _create_face_gallery_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Registered People")
+        dialog.setMinimumSize(420, 320)
+        dialog.setStyleSheet("""
+            QDialog { background-color: #10141b; color: #e9edf5; }
+            QLabel { color: #e9edf5; background-color: transparent; }
+            QListWidget {
+                background-color: #10141b;
+                color: #f5f7fb;
+                border: 1px solid #303846;
+                outline: none;
+            }
+            QListWidget::item { padding: 4px; border-radius: 5px; }
+            QListWidget::item:selected { background-color: #202938; }
+            QListWidget::item:hover { background-color: #181e27; }
+            QWidget#FaceGalleryRow {
+                background-color: #181e27;
+                border: 1px solid #303846;
+                border-radius: 5px;
+            }
+            """)
+
+        layout = QVBoxLayout(dialog)
+        description = QLabel(
+            "Each saved sample is a face embedding. Add more images to an "
+            "existing person from the list."
+        )
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        self._face_gallery_list = QListWidget(dialog)
+        layout.addWidget(self._face_gallery_list, 1)
+
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.close)
+        layout.addWidget(close_button)
+
+        self._face_gallery_dialog = dialog
+
+    def _refresh_face_gallery(self) -> None:
+        if self._face_gallery_list is None:
+            return
+
+        self._face_gallery_list.clear()
+        self._face_gallery_add_buttons = []
+        self._face_gallery_list.addItem("Loading registered people...")
+        self.face_gallery_request.emit()
+
+    def _face_gallery_loaded(self, identity_sample_counts) -> None:
+        if self._face_gallery_list is None:
+            return
+
+        self._face_gallery_list.clear()
+        self._face_gallery_add_buttons = []
+
+        if not identity_sample_counts:
+            self._face_gallery_list.addItem(
+                "No people registered yet. Add the first person in the Sources panel."
+            )
+            return
+
+        for identity, sample_count in identity_sample_counts:
+            item = QListWidgetItem()
+            row = QWidget(self._face_gallery_list)
+            row.setObjectName("FaceGalleryRow")
+            row.setAttribute(Qt.WA_StyledBackground)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(8, 4, 8, 4)
+
+            identity_label = QLabel(identity, row)
+            identity_label.setStyleSheet(
+                "color: #f5f7fb; background-color: transparent; font-weight: 600;"
+            )
+            count_label = QLabel(f"{sample_count} sample(s)", row)
+            count_label.setStyleSheet("color: #b8c1cf; background-color: transparent;")
+            add_button = QPushButton("Add Images", row)
+            add_button.setEnabled(not self._face_registration_busy)
+            add_button.clicked.connect(
+                lambda checked=False, name=identity: self._add_images_for_identity(name)
+            )
+
+            row_layout.addWidget(identity_label, 1)
+            row_layout.addWidget(count_label)
+            row_layout.addWidget(add_button)
+
+            item.setSizeHint(row.sizeHint())
+            self._face_gallery_list.addItem(item)
+            self._face_gallery_list.setItemWidget(item, row)
+            self._face_gallery_add_buttons.append(add_button)
+
+    def _face_gallery_failed(self, message: str) -> None:
+        if self._face_gallery_list is not None:
+            self._face_gallery_list.clear()
+            self._face_gallery_list.addItem(f"Could not load gallery: {message}")
+
+    def _add_images_for_identity(self, identity: str) -> None:
+        if self._face_registration_busy:
+            return
+
+        image_paths, _ = QFileDialog.getOpenFileNames(
+            self._face_gallery_dialog or self,
+            f"Add face photos for {identity}",
+            str(Path("data/face_registry")),
+            "Face images (*.jpg *.jpeg *.png)",
+        )
+        if image_paths:
+            self._begin_face_registration(identity, image_paths)
+
     def _face_registration_succeeded(
         self,
         message: str,
     ):
-        self.register_faces_button.setEnabled(True)
+        self._face_registration_busy = False
+        self._set_face_registration_controls_enabled(True)
         self.face_registration_status.setText(message)
         self.statusBar().showMessage(message, 10000)
+        if (
+            self._face_gallery_dialog is not None
+            and self._face_gallery_dialog.isVisible()
+        ):
+            self._refresh_face_gallery()
 
     def _face_registration_failed(
         self,
         message: str,
     ):
-        self.register_faces_button.setEnabled(True)
+        self._face_registration_busy = False
+        self._set_face_registration_controls_enabled(True)
         self.face_registration_status.setText("Registration failed.")
         QMessageBox.warning(self, "Face registration failed", message)
 
@@ -958,7 +1228,7 @@ class MainWindow(QMainWindow):
             self,
             "Open CCTV Video",
             str(Path("data/videos")),
-            ("Video Files " "(*.mp4 *.avi *.mov *.mkv)"),
+            ("Video Files (*.mp4 *.avi *.mov *.mkv)"),
         )
 
         if not path:
@@ -1099,6 +1369,9 @@ class MainWindow(QMainWindow):
         frame,
     ):
         self._last_frame = frame
+
+        if self._live_face_dialog is not None and self._live_face_dialog.isVisible():
+            self._live_face_dialog.set_frame(frame.image)
 
         self.video_view.set_frame(frame.image)
 
@@ -1500,7 +1773,7 @@ class MainWindow(QMainWindow):
         self._reset_vision_runtime(reanalyse=True)
 
         self.statusBar().showMessage(
-            f"Restricted zone saved " f"with {len(points)} points."
+            f"Restricted zone saved with {len(points)} points."
         )
 
     def _zone_cleared(self):
@@ -1611,9 +1884,9 @@ class MainWindow(QMainWindow):
         remaining = seconds % 60
 
         if hours > 0:
-            return f"{hours:02d}:" f"{minutes:02d}:" f"{remaining:02d}"
+            return f"{hours:02d}:{minutes:02d}:{remaining:02d}"
 
-        return f"{minutes:02d}:" f"{remaining:02d}"
+        return f"{minutes:02d}:{remaining:02d}"
 
     # ==========================================================
     # CLOSE
