@@ -89,6 +89,39 @@ def test_recorded_event_time_format_and_duplicate_suppression(window):
     assert window.event_table.rowCount() == 1
 
 
+def test_confirmed_identity_is_added_to_recent_person_events(window):
+    window.add_event(
+        "00:00:01.000",
+        "INTRUSION",
+        "Person #4 entered zone",
+        source_id="recording.mp4",
+        source_time_seconds=1.0,
+        track_id=4,
+    )
+
+    window._annotate_recent_track_events(
+        track_id=4,
+        identity="Alex",
+        source_id="recording.mp4",
+        identity_time_seconds=1.5,
+    )
+
+    assert window.event_table.item(0, 2).text() == "Alex (Person #4) entered zone"
+
+    window.add_event(
+        "00:00:02.000",
+        "LOITERING",
+        "Alex (Person #4) exceeded 15s dwell time",
+        source_id="recording.mp4",
+        source_time_seconds=2.0,
+        track_id=4,
+        identity="Alex",
+    )
+    assert window.event_table.item(1, 2).text() == (
+        "Alex (Person #4) exceeded 15s dwell time"
+    )
+
+
 class FakeSeekCamera:
     fps = 30.0
     frame_count = 300

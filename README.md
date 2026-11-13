@@ -626,7 +626,10 @@ has no recording timeline. Since the worker may skip frames while inference is
 busy, an event time identifies the processed frame where the rule triggered;
 it may be later than the event's first real-world appearance. Smoke notices
 follow smoke-detection edges and do not use temporal persistence; temporal
-persistence remains fire-only.
+persistence remains fire-only. Person-related events show a registered name
+after the face identity reaches its confirmation quorum. If confirmation
+arrives shortly after an entry/exit/loitering event, the event row is updated
+with the name; before confirmation, it shows the tracker ID.
 
 Conceptually:
 

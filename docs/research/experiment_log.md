@@ -279,3 +279,14 @@ Copy this section for each actual comparison or test.
 - Live events show the frame's local date and time and are not seekable. Because the worker processes latest frames and may skip observations, a timestamp identifies the frame where the event rule triggered; it does not guarantee the first frame of the real-world event.
 - Verification: full `.venv` pytest suite — **81 passed**; `ruff check .` passed; Ruff format and Black checks passed for all seven changed Python files; `git diff --check` passed. Synthetic worker tests cover fire, smoke, intrusion, loitering, and identity event offsets; UI tests cover millisecond timecode, click-to-seek, live-event no-seek behavior, deduplication, and nearest-frame seek ordering.
 - Evidence boundary: tests use synthetic detections/tracks and a fake video camera. They do not establish detector accuracy, true event-onset timing, or end-to-end seek behavior on a physical recording.
+
+## 2026-11-14 — Registered identity names in person events
+
+**Status:** implemented and software-tested in the local working tree; normal-app display remains for the user to check.
+
+- `INTRUSION`, `EXIT`, and `LOITERING` descriptions now include the confirmed registered name alongside the track ID. The `IDENTITY` event also includes the name. Candidate or not-yet-confirmed matches are not presented as identities.
+- When a track reaches identity quorum after one of its person events, the UI annotates recent same-track person events from the same source if they occurred within the previous 2 source seconds. This matches the identity memory's evidence horizon; earlier or different-source events are left unchanged.
+- Verification: worker tests cover named intrusion, loitering, and exit events after identity confirmation; a UI test covers adding the name to a recent event and retaining it on later person events. Full-suite and formatting checks are recorded for this update below.
+- Evidence boundary: tests use synthetic face matches and timestamps; they do not establish real-camera face identification quality or name correctness.
+
+- Software checks for this update: full `.venv` pytest suite — **82 passed**; `ruff check .` passed; Ruff format and Black checks passed for all six changed Python files; `git diff --check` passed.

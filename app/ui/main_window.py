@@ -1564,6 +1564,14 @@ class MainWindow(QMainWindow):
         )
 
         for event in result.events:
+            if event.event_type == "IDENTITY" and event.track_id is not None:
+                if event.identity is not None:
+                    self._annotate_recent_track_events(
+                        event.track_id,
+                        event.identity,
+                        event.source_id,
+                        event.source_time_seconds,
+                    )
             if event.source_id is not None and event.source_time_seconds is not None:
                 time_text = self._format_event_video_time(event.source_time_seconds)
             else:
@@ -1574,6 +1582,8 @@ class MainWindow(QMainWindow):
                 event.description,
                 source_id=event.source_id,
                 source_time_seconds=event.source_time_seconds,
+                track_id=event.track_id,
+                identity=event.identity,
             )
 
     def _vision_analysis_finished(
@@ -1907,6 +1917,8 @@ class MainWindow(QMainWindow):
         description: str,
         source_id: str | None = None,
         source_time_seconds: float | None = None,
+        track_id: int | None = None,
+        identity: str | None = None,
     ):
         if source_id is not None and source_time_seconds is not None:
             event_key = (
@@ -1936,11 +1948,12 @@ class MainWindow(QMainWindow):
             QTableWidgetItem(event_type),
         )
 
-        self.event_table.setItem(
-            row,
-            2,
-            QTableWidgetItem(description),
+        description_item = QTableWidgetItem(
+            self._with_identity_name(description, track_id, identity)
         )
+        description_item.setData(Qt.UserRole, track_id)
+        description_item.setData(Qt.UserRole + 1, identity)
+        self.event_table.setItem(row, 2, description_item)
 
         self.event_table.scrollToBottom()
 
@@ -1951,6 +1964,55 @@ class MainWindow(QMainWindow):
         minutes, remainder = divmod(remainder, 60_000)
         whole_seconds, milliseconds = divmod(remainder, 1000)
         return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d}.{milliseconds:03d}"
+
+    @staticmethod
+    def _with_identity_name(
+        description: str,
+        track_id: int | None,
+        identity: str | None,
+    ) -> str:
+        if track_id is None or identity is None:
+            return description
+        marker = f"Person #{track_id}"
+        named_marker = f"{identity} ({marker})"
+        if named_marker in description or marker not in description:
+            return description
+        return description.replace(marker, named_marker, 1)
+
+    def _annotate_recent_track_events(
+        self,
+        track_id: int,
+        identity: str,
+        source_id: str | None,
+        identity_time_seconds: float | None,
+    ) -> None:
+        if identity_time_seconds is None:
+            return
+
+        person_event_types = {"INTRUSION", "EXIT", "LOITERING"}
+        for row in range(self.event_table.rowCount()):
+            event_type_item = self.event_table.item(row, 1)
+            time_item = self.event_table.item(row, 0)
+            description_item = self.event_table.item(row, 2)
+            if event_type_item is None or time_item is None or description_item is None:
+                continue
+            if event_type_item.text() not in person_event_types:
+                continue
+            if description_item.data(Qt.UserRole) != track_id:
+                continue
+            if description_item.data(Qt.UserRole + 1) is not None:
+                continue
+            if time_item.data(Qt.UserRole + 1) != source_id:
+                continue
+
+            event_time = time_item.data(Qt.UserRole)
+            if event_time is None or not 0 <= identity_time_seconds - event_time <= 2.0:
+                continue
+
+            description_item.setText(
+                self._with_identity_name(description_item.text(), track_id, identity)
+            )
+            description_item.setData(Qt.UserRole + 1, identity)
 
     def _event_row_clicked(self, row: int, _column: int) -> None:
         time_item = self.event_table.item(row, 0)

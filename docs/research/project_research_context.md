@@ -2,7 +2,7 @@
 
 **Prepared:** 2026-11-14
 
-**Repository snapshot:** base commit `a477155` plus the timestamped notification changes described here
+**Repository snapshot:** base commit `a477155` plus timestamped notifications and registered-name display changes described here
 **Purpose:** keep the project’s research framing, architecture, development decisions, evidence boundaries, and reproducibility context in one place for later paper writing.
 
 Read this file together with [the experiment log](experiment_log.md). This document is the project-context and methods companion; the log is the dated record of comparisons, runs, anomalies, and results. They describe the project-specific information currently preserved in the repository. They do not replace external literature citations, raw datasets, or missing run artifacts.
@@ -114,7 +114,7 @@ The UI stores a polygon in normalized coordinates. The worker converts it to fra
 
 The intrusion path is shown only after that track has entered through the observed transition. This is a rule-based state distinction, not a claim of intent or unauthorized behavior. A missing track, imperfect ground point, or tracker-ID change can affect whether the transition is observed. The current UI supports one polygon for the active scene.
 
-`VisionEvent` carries the source-time offset and recording path when a request comes from a video. The event panel displays that offset to milliseconds and clicking a row pauses playback and seeks to the triggering frame. Live events use the frame's local wall-clock timestamp and do not carry a seekable recording position. The panel resets when the active source changes so old events cannot be applied to a different recording. Because the latest-frame worker may skip frames, the timestamp is the processed frame where the rule fired, not guaranteed ground-truth onset time.
+`VisionEvent` carries the source-time offset and recording path when a request comes from a video. The event panel displays that offset to milliseconds and clicking a row pauses playback and seeks to the triggering frame. Live events use the frame's local wall-clock timestamp and do not carry a seekable recording position. The panel resets when the active source changes so old events cannot be applied to a different recording. Because the latest-frame worker may skip frames, the timestamp is the processed frame where the rule fired, not guaranteed ground-truth onset time. Person-linked intrusion, exit, and loitering descriptions include a registered identity after that track reaches its configured quorum; if confirmation follows within 2 source seconds, recent same-track events from that source are annotated too. Unconfirmed matches remain labeled by tracker ID.
 
 ### 4.4 Dwell / loitering
 
@@ -208,6 +208,7 @@ The source history recorded here includes the project milestones through `875244
 | 2026-11-14 | `eac7919` | Progress ring, head guide, directional arrow, clearer registration instructions, and the research-context record were pushed; user reported the pose workflow worked in a camera trial. |
 | 2026-11-14 | `a477155` | Registered-person removal with confirmation, case-insensitive sample deletion, atomic NPZ persistence, and empty-gallery support. |
 | 2026-11-14 | Local notifications feature | Timestamped fire, smoke-edge, intrusion, exit, loitering, and identity events added; recording events seek to their trigger frame. |
+| 2026-11-14 | Local identity labels | Confirmed registered names added to person events; recent same-track events can be annotated when identity quorum follows shortly afterward. |
 
 The release tag remains `v0.2.0`; later features are unreleased development at this snapshot. Commit dates and subjects document repository history, not necessarily the exact date a user first tested or conceived each feature.
 
@@ -246,7 +247,7 @@ This was a small user-reported run recovered from the handoff, not rerun at comm
 
 The experiment log records a real fire-model inference regression check on one repository sample image with two fire detections (confidences 0.863 and 0.838). This is not a dataset-level fire evaluation. The repository tests cover units such as temporal logic, dwell rules, face association, registry persistence, and identity memory. An optional real-model integration test is dependent on local model weights and sample media.
 
-At the 2026-10-31 implementation snapshot, the recorded software checks were 59 passing tests, Ruff lint/format checks, a Black-engine formatting check for the changed Python files, `git diff --check`, and an offscreen Qt dialog smoke check. The offscreen check used synthetic frames; it did not exercise a physical webcam or InsightFace live inference. The 2026-11-13 pose-guidance check uses mocked landmarks and synthetic frames; it also does not establish performance on a physical webcam. The registered-person removal update brought the suite to 74 passing tests. The timestamped-notifications update brings it to 81 and includes synthetic event and seek checks; neither update establishes detector accuracy or live operational performance. See the dated log entries for scope and evidence limits.
+At the 2026-10-31 implementation snapshot, the recorded software checks were 59 passing tests, Ruff lint/format checks, a Black-engine formatting check for the changed Python files, `git diff --check`, and an offscreen Qt dialog smoke check. The offscreen check used synthetic frames; it did not exercise a physical webcam or InsightFace live inference. The 2026-11-13 pose-guidance check uses mocked landmarks and synthetic frames; it also does not establish performance on a physical webcam. The registered-person removal update brought the suite to 74 passing tests. Timestamped notifications brought it to 81; the registered-name event update brings it to 82. These checks use synthetic events and a fake video camera and do not establish detector accuracy, name correctness, or live operational performance. See the dated log entries for scope and evidence limits.
 
 ### 7.4 Claims currently supportable
 

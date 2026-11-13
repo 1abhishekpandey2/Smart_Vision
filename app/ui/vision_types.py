@@ -62,6 +62,8 @@ class VisionEvent:
     description: str
     source_time_seconds: float | None = None
     source_id: str | None = None
+    track_id: int | None = None
+    identity: str | None = None
 
 
 @dataclass(frozen=True)

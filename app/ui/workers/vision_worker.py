@@ -513,7 +513,13 @@ class VisionWorker(QObject):
 
             events = []
 
-            def record_event(event_type: str, description: str) -> None:
+            def record_event(
+                event_type: str,
+                description: str,
+                *,
+                track_id: int | None = None,
+                identity: str | None = None,
+            ) -> None:
                 events.append(
                     VisionEvent(
                         timestamp=frame.timestamp,
@@ -521,6 +527,8 @@ class VisionWorker(QObject):
                         description=description,
                         source_time_seconds=request.source_time_seconds,
                         source_id=request.source_id,
+                        track_id=track_id,
+                        identity=identity,
                     )
                 )
 
@@ -736,6 +744,8 @@ class VisionWorker(QObject):
                             record_event(
                                 "IDENTITY",
                                 f"Person #{track_id} identified as {identity}",
+                                track_id=track_id,
+                                identity=identity,
                             )
                             self._reported_identity_by_track[track_id] = identity
                     self._reported_identity_by_track = {
@@ -768,6 +778,14 @@ class VisionWorker(QObject):
                 # ==============================================
 
                 for track in tracks:
+                    face_match = face_matches.get(track.track_id)
+                    remembered_identity = remembered_identities.get(track.track_id)
+                    person_subject = (
+                        f"{remembered_identity} (Person #{track.track_id})"
+                        if remembered_identity is not None
+                        else f"Person #{track.track_id}"
+                    )
+
                     # ------------------------------------------
                     # TRACK POSITION
                     # ------------------------------------------
@@ -815,7 +833,9 @@ class VisionWorker(QObject):
 
                             record_event(
                                 "INTRUSION",
-                                f"Person #{track.track_id} entered zone",
+                                f"{person_subject} entered zone",
+                                track_id=track.track_id,
+                                identity=remembered_identity,
                             )
 
                         # ======================================
@@ -830,7 +850,9 @@ class VisionWorker(QObject):
 
                             record_event(
                                 "EXIT",
-                                f"Person #{track.track_id} exited zone",
+                                f"{person_subject} exited zone",
+                                track_id=track.track_id,
+                                identity=remembered_identity,
                             )
 
                         # Save current state for next frame.
@@ -855,8 +877,10 @@ class VisionWorker(QObject):
                         if dwell_state.just_triggered:
                             record_event(
                                 "LOITERING",
-                                f"Person #{track.track_id} exceeded "
+                                f"{person_subject} exceeded "
                                 f"{settings.dwell_seconds}s dwell time",
+                                track_id=track.track_id,
+                                identity=remembered_identity,
                             )
 
                     # ==========================================
@@ -899,9 +923,6 @@ class VisionWorker(QObject):
 
                     if dwell_state is not None and dwell_state.is_loitering:
                         person_label += " | LOITERING"
-
-                    face_match = face_matches.get(track.track_id)
-                    remembered_identity = remembered_identities.get(track.track_id)
 
                     if remembered_identity is not None:
                         person_label += f" | Identity: {remembered_identity}"

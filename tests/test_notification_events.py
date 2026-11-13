@@ -4,6 +4,8 @@ import numpy as np
 
 from app.camera.frame import Frame
 from app.detection.detection import Detection
+from app.recognition.association import FaceObservation
+from app.recognition.registry import FaceMatch, MatchState
 from app.tracking.track import Track
 from app.ui.vision_types import VisionRequest, VisionSettings
 from app.ui.workers.vision_worker import VisionWorker
@@ -25,12 +27,36 @@ class FakePersonTracker:
         return self.tracks
 
 
+class FakeFaceEmbedder:
+    def detect_faces(self, image):
+        return [
+            FaceObservation(
+                bounding_box=(45.0, 60.0, 55.0, 70.0),
+                embedding=np.asarray([1.0, 0.0], dtype=np.float32),
+            )
+        ]
+
+
+class FakeFaceRegistry:
+    def match(self, embedding):
+        return FaceMatch(
+            identity="Alex",
+            similarity=0.8,
+            second_identity=None,
+            second_similarity=None,
+            margin=None,
+            state=MatchState.STRONG_MATCH,
+        )
+
+
 def make_request(
     *,
     source_time_seconds,
     source_id="recording.mp4",
     fire_enabled=False,
     person_enabled=False,
+    face_recognition_enabled=False,
+    identity_confirmation_observations=3,
     intrusion_enabled=False,
     loitering_enabled=False,
     dwell_seconds=15,
@@ -45,8 +71,8 @@ def make_request(
         settings=VisionSettings(
             fire_enabled=fire_enabled,
             person_enabled=person_enabled,
-            face_recognition_enabled=False,
-            identity_confirmation_observations=3,
+            face_recognition_enabled=face_recognition_enabled,
+            identity_confirmation_observations=identity_confirmation_observations,
             intrusion_enabled=intrusion_enabled,
             loitering_enabled=loitering_enabled,
             dwell_seconds=dwell_seconds,
@@ -121,9 +147,11 @@ def test_fire_events_use_video_offsets_at_confirmation_and_clear():
 
 def test_intrusion_and_loitering_events_have_the_trigger_frame_offset():
     worker = VisionWorker()
-    outside = Track(4, 0, "person", 0.9, (40, 75, 60, 99))
+    outside = Track(4, 0, "person", 0.9, (40, 55, 60, 99))
     inside = Track(4, 0, "person", 0.9, (40, 55, 60, 75))
     worker._person_tracker = FakePersonTracker([outside])
+    worker._face_embedder = FakeFaceEmbedder()
+    worker._face_registry = FakeFaceRegistry()
     results = []
     worker.result_ready.connect(results.append)
     zone = ((0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9))
@@ -133,6 +161,8 @@ def test_intrusion_and_loitering_events_have_the_trigger_frame_offset():
             make_request(
                 source_time_seconds=seconds,
                 person_enabled=True,
+                face_recognition_enabled=True,
+                identity_confirmation_observations=1,
                 intrusion_enabled=True,
                 loitering_enabled=True,
                 dwell_seconds=1,
@@ -151,9 +181,16 @@ def test_intrusion_and_loitering_events_have_the_trigger_frame_offset():
 
     events = [event for result in results for event in result.events]
     assert [event.event_type for event in events] == [
+        "IDENTITY",
         "INTRUSION",
         "LOITERING",
         "EXIT",
     ]
-    assert [event.source_time_seconds for event in events] == [2.0, 3.1, 5.1]
+    assert [event.source_time_seconds for event in events] == [0.0, 2.0, 3.1, 5.1]
     assert all(event.source_id == "recording.mp4" for event in events)
+    assert [event.description for event in events[1:]] == [
+        "Alex (Person #4) entered zone",
+        "Alex (Person #4) exceeded 1s dwell time",
+        "Alex (Person #4) exited zone",
+    ]
+    assert all(event.identity == "Alex" for event in events)
