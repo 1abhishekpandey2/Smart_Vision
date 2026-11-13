@@ -102,9 +102,6 @@ class FaceRegistry:
                 identities.append(identity)
                 embeddings.append(sample)
 
-        if not embeddings:
-            raise ValueError("Cannot save an empty face registry")
-
         path.parent.mkdir(
             parents=True,
             exist_ok=True,
@@ -116,7 +113,11 @@ class FaceRegistry:
                 identities,
                 dtype=np.str_,
             ),
-            embeddings=np.stack(embeddings).astype(np.float32),
+            embeddings=(
+                np.stack(embeddings).astype(np.float32)
+                if embeddings
+                else np.empty((0, 0), dtype=np.float32)
+            ),
         )
 
     def add_sample(
@@ -142,6 +143,24 @@ class FaceRegistry:
             [],
         ).append(normalized)
 
+        return stored_identity
+
+    def remove_identity(self, identity: str) -> str | None:
+        """Remove all samples for a name, matching names case-insensitively."""
+
+        identity_key = identity.strip().casefold()
+        stored_identity = next(
+            (
+                existing_identity
+                for existing_identity in self._embeddings
+                if existing_identity.casefold() == identity_key
+            ),
+            None,
+        )
+        if stored_identity is None:
+            return None
+
+        del self._embeddings[stored_identity]
         return stored_identity
 
     def match(

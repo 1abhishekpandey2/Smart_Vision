@@ -56,6 +56,10 @@ class VisionWorker(QObject):
 
     face_gallery_failed = pyqtSignal(str)
 
+    face_identity_removal_succeeded = pyqtSignal(str)
+
+    face_identity_removal_failed = pyqtSignal(str)
+
     face_pose_check_ready = pyqtSignal(object)
 
     def __init__(
@@ -370,6 +374,30 @@ class VisionWorker(QObject):
             self.face_gallery_ready.emit(registry.identity_sample_counts)
         except Exception as exc:
             self.face_gallery_failed.emit(str(exc))
+
+    @pyqtSlot(str)
+    def remove_face_identity(self, identity: str) -> None:
+        """Remove every saved embedding for one identity and persist atomically."""
+
+        identity = identity.strip()
+        if not identity:
+            self.face_identity_removal_failed.emit(
+                "Select a registered person to remove."
+            )
+            return
+
+        try:
+            registry = FaceRegistry.load(self._face_registry_path)
+            stored_identity = registry.remove_identity(identity)
+            if stored_identity is None:
+                raise ValueError(f"Registered person '{identity}' was not found.")
+
+            self._save_face_registry_atomically(registry)
+            self._face_registry = registry
+            self._identity_memory.reset()
+            self.face_identity_removal_succeeded.emit(stored_identity)
+        except Exception as exc:
+            self.face_identity_removal_failed.emit(str(exc))
 
     # ==========================================================
     # RUNTIME RESET

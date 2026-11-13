@@ -66,6 +66,8 @@ class MainWindow(QMainWindow):
 
     face_gallery_request = pyqtSignal()
 
+    face_identity_removal_request = pyqtSignal(str)
+
     face_pose_check_request = pyqtSignal(object, bool)
 
     face_embedding_registration_request = pyqtSignal(str, object)
@@ -103,6 +105,7 @@ class MainWindow(QMainWindow):
         self._face_gallery_dialog = None
         self._face_gallery_list = None
         self._face_gallery_add_buttons = []
+        self._face_gallery_remove_buttons = []
         self._face_registration_busy = False
         self._live_face_dialog = None
         self._live_face_session_active = False
@@ -890,6 +893,10 @@ class MainWindow(QMainWindow):
 
         self.face_gallery_request.connect(self._vision_worker.load_face_gallery)
 
+        self.face_identity_removal_request.connect(
+            self._vision_worker.remove_face_identity
+        )
+
         self.face_pose_check_request.connect(
             self._vision_worker.inspect_face_pose_frame
         )
@@ -919,6 +926,14 @@ class MainWindow(QMainWindow):
         self._vision_worker.face_gallery_ready.connect(self._face_gallery_loaded)
 
         self._vision_worker.face_gallery_failed.connect(self._face_gallery_failed)
+
+        self._vision_worker.face_identity_removal_succeeded.connect(
+            self._face_identity_removal_succeeded
+        )
+
+        self._vision_worker.face_identity_removal_failed.connect(
+            self._face_identity_removal_failed
+        )
 
         self._vision_worker.face_pose_check_ready.connect(
             self._live_face_pose_check_ready
@@ -1046,6 +1061,8 @@ class MainWindow(QMainWindow):
         self.live_face_registration_button.setEnabled(enabled)
         for button in self._face_gallery_add_buttons:
             button.setEnabled(enabled)
+        for button in self._face_gallery_remove_buttons:
+            button.setEnabled(enabled)
 
     def _show_face_gallery_clicked(self) -> None:
         if self._face_gallery_dialog is None:
@@ -1076,12 +1093,20 @@ class MainWindow(QMainWindow):
                 border: 1px solid #303846;
                 border-radius: 5px;
             }
+            QPushButton#RemoveFaceIdentity {
+                color: #ffd9d9;
+                background-color: #43272d;
+                border: 1px solid #74414a;
+                border-radius: 5px;
+                padding: 5px 9px;
+            }
+            QPushButton#RemoveFaceIdentity:hover { background-color: #5a3038; }
             """)
 
         layout = QVBoxLayout(dialog)
         description = QLabel(
-            "Each saved sample is a face embedding. Add more images to an "
-            "existing person from the list."
+            "Each saved sample is a face embedding. Add images to an existing "
+            "person or remove that person and all of their saved samples."
         )
         description.setWordWrap(True)
         layout.addWidget(description)
@@ -1101,6 +1126,7 @@ class MainWindow(QMainWindow):
 
         self._face_gallery_list.clear()
         self._face_gallery_add_buttons = []
+        self._face_gallery_remove_buttons = []
         self._face_gallery_list.addItem("Loading registered people...")
         self.face_gallery_request.emit()
 
@@ -1110,6 +1136,7 @@ class MainWindow(QMainWindow):
 
         self._face_gallery_list.clear()
         self._face_gallery_add_buttons = []
+        self._face_gallery_remove_buttons = []
 
         if not identity_sample_counts:
             self._face_gallery_list.addItem(
@@ -1136,15 +1163,28 @@ class MainWindow(QMainWindow):
             add_button.clicked.connect(
                 lambda checked=False, name=identity: self._add_images_for_identity(name)
             )
+            remove_button = QPushButton("Remove", row)
+            remove_button.setObjectName("RemoveFaceIdentity")
+            remove_button.setToolTip(
+                f"Remove {sample_count} saved face sample(s) for {identity}"
+            )
+            remove_button.setEnabled(not self._face_registration_busy)
+            remove_button.clicked.connect(
+                lambda checked=False, name=identity, count=sample_count: (
+                    self._remove_face_identity_clicked(name, count)
+                )
+            )
 
             row_layout.addWidget(identity_label, 1)
             row_layout.addWidget(count_label)
             row_layout.addWidget(add_button)
+            row_layout.addWidget(remove_button)
 
             item.setSizeHint(row.sizeHint())
             self._face_gallery_list.addItem(item)
             self._face_gallery_list.setItemWidget(item, row)
             self._face_gallery_add_buttons.append(add_button)
+            self._face_gallery_remove_buttons.append(remove_button)
 
     def _face_gallery_failed(self, message: str) -> None:
         if self._face_gallery_list is not None:
@@ -1163,6 +1203,47 @@ class MainWindow(QMainWindow):
         )
         if image_paths:
             self._begin_face_registration(identity, image_paths)
+
+    def _remove_face_identity_clicked(self, identity: str, sample_count: int) -> None:
+        if self._face_registration_busy or self._live_face_session_active:
+            return
+
+        response = QMessageBox.question(
+            self._face_gallery_dialog or self,
+            "Remove registered person",
+            f"Remove '{identity}' and all {sample_count} saved face sample(s) "
+            "from the local gallery?\n\n"
+            "This cannot be undone. Original image files are not changed.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if response != QMessageBox.Yes:
+            return
+
+        self._face_registration_busy = True
+        self._set_face_registration_controls_enabled(False)
+        self.face_registration_status.setText(
+            f"Removing {identity} from the gallery..."
+        )
+        self.face_identity_removal_request.emit(identity)
+
+    def _face_identity_removal_succeeded(self, identity: str) -> None:
+        self._face_registration_busy = False
+        self._set_face_registration_controls_enabled(True)
+        message = f"Removed '{identity}' and all of its saved face samples."
+        self.face_registration_status.setText(message)
+        self.statusBar().showMessage(message, 10000)
+        if (
+            self._face_gallery_dialog is not None
+            and self._face_gallery_dialog.isVisible()
+        ):
+            self._refresh_face_gallery()
+
+    def _face_identity_removal_failed(self, message: str) -> None:
+        self._face_registration_busy = False
+        self._set_face_registration_controls_enabled(True)
+        self.face_registration_status.setText("Could not remove registered person.")
+        QMessageBox.warning(self, "Face removal failed", message)
 
     def _face_registration_succeeded(
         self,

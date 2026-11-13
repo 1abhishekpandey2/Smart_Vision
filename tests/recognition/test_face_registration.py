@@ -86,6 +86,34 @@ def test_gallery_reports_sorted_identity_sample_counts():
     assert registry.identity_sample_counts == (("alex", 2), ("Zoe", 1))
 
 
+def test_registry_removes_every_sample_for_case_insensitive_identity(tmp_path):
+    registry_path = tmp_path / "face_registry.npz"
+    registry = FaceRegistry()
+    registry.add_sample("Alex", np.asarray([1.0, 0.0]))
+    registry.add_sample("aLeX", np.asarray([0.9, 0.1]))
+    registry.add_sample("Zoe", np.asarray([0.0, 1.0]))
+
+    assert registry.remove_identity("alex") == "Alex"
+    assert registry.identity_sample_counts == (("Zoe", 1),)
+    assert registry.remove_identity("Unknown") is None
+
+    registry.save(registry_path)
+    saved = FaceRegistry.load(registry_path)
+    assert saved.match(np.asarray([0.0, 1.0])).identity == "Zoe"
+
+
+def test_empty_registry_can_be_saved_and_loaded(tmp_path):
+    registry = FaceRegistry()
+    assert registry.remove_identity("Nobody") is None
+
+    registry_path = tmp_path / "empty_registry.npz"
+    registry.save(registry_path)
+    saved = FaceRegistry.load(registry_path)
+
+    assert saved.identity_sample_counts == ()
+    assert saved.match(np.asarray([1.0, 0.0])).state is MatchState.NO_MATCH
+
+
 def test_worker_loads_gallery_sample_counts_without_loading_embedder(tmp_path):
     registry_path = tmp_path / "face_registry.npz"
     registry = FaceRegistry()
@@ -113,6 +141,62 @@ def test_worker_reports_empty_gallery_when_registry_is_missing(tmp_path):
 
     assert gallery_results == [()]
     assert worker._face_embedder is None
+
+
+def test_worker_removes_person_atomically_and_keeps_other_identities(tmp_path):
+    registry_path = tmp_path / "face_registry.npz"
+    existing = FaceRegistry()
+    existing.add_sample("Alex", np.asarray([1.0, 0.0]))
+    existing.add_sample("aLeX", np.asarray([0.9, 0.1]))
+    existing.add_sample("Zoe", np.asarray([0.0, 1.0]))
+    existing.save(registry_path)
+
+    worker = VisionWorker(face_registry_path=str(registry_path))
+    removed = []
+    failures = []
+    worker.face_identity_removal_succeeded.connect(removed.append)
+    worker.face_identity_removal_failed.connect(failures.append)
+    worker._identity_memory.update(0.0, {7}, {7: "Alex"})
+    assert worker._identity_memory.confirmation_progress(7, "Alex") == (1, 3)
+
+    worker.remove_face_identity("alex")
+
+    saved = FaceRegistry.load(registry_path)
+    assert removed == ["Alex"]
+    assert failures == []
+    assert saved.identity_sample_counts == (("Zoe", 1),)
+    assert worker._identity_memory.confirmation_progress(7, "Alex") is None
+    assert not (tmp_path / "face_registry.tmp.npz").exists()
+
+    worker.remove_face_identity("ZOE")
+
+    empty = FaceRegistry.load(registry_path)
+    assert removed == ["Alex", "Zoe"]
+    assert empty.identity_sample_counts == ()
+    assert empty.match(np.asarray([1.0, 0.0])).state is MatchState.NO_MATCH
+
+    worker.register_face_embeddings("Maya", [np.asarray([1.0, 0.0])])
+    assert FaceRegistry.load(registry_path).identity_sample_counts == (("Maya", 1),)
+
+
+def test_worker_failed_removal_leaves_registry_file_unchanged(tmp_path):
+    registry_path = tmp_path / "face_registry.npz"
+    existing = FaceRegistry()
+    existing.add_sample("Alex", np.asarray([1.0, 0.0]))
+    existing.save(registry_path)
+    original_bytes = registry_path.read_bytes()
+
+    worker = VisionWorker(face_registry_path=str(registry_path))
+    removed = []
+    failures = []
+    worker.face_identity_removal_succeeded.connect(removed.append)
+    worker.face_identity_removal_failed.connect(failures.append)
+
+    worker.remove_face_identity("Unknown")
+
+    assert registry_path.read_bytes() == original_bytes
+    assert removed == []
+    assert failures == ["Registered person 'Unknown' was not found."]
 
 
 def test_failed_image_leaves_existing_registry_file_unchanged(tmp_path):

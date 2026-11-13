@@ -258,3 +258,13 @@ Copy this section for each actual comparison or test.
 - The guide is an instruction aid. It does not alter landmark thresholds, embedding selection, or capture policy. Automatic non-frontal capture still requires three consecutive matching checks, and manual capture remains available.
 - Verification: full `.venv` pytest suite — **70 passed**; `ruff check .` passed; Ruff format check passed for the two changed Python files; Black check passed for those files; `git diff --check` passed. The ring's cumulative fraction and 1/3, 2/3, and completed-step transitions are covered by the dialog test. A synthetic offscreen UI render exercised the guide and ring painting. Repo-wide `ruff format --check .` still reports 13 unrelated files needing formatting; none were reformatted for this feature.
 - Evidence boundary: the prior camera trial was user-reported as working. No new physical-camera usability trial or recognition comparison is claimed. The synthetic frame and software tests do not show how the guide will align with every user's face or camera placement.
+
+## 2026-11-14 — Remove a registered person
+
+**Status:** implemented and software-tested in the local working tree; the user has not yet exercised the removal control on their gallery.
+
+- The Registered People dialog now shows a **Remove** action for each identity. A confirmation asks to remove all saved embeddings for that identity; **No** is the default. Original source image files are not changed.
+- Removal is case-insensitive and deletes all samples belonging to the stored identity. The registry is saved through the existing temporary-NPZ and atomic-replacement path. Removing the final identity writes an empty but loadable NPZ gallery. The worker updates its in-memory registry and resets track identity memory after success.
+- Verification: full `.venv` pytest suite — **74 passed**; `ruff check .` passed; Ruff format and Black checks passed for the four changed Python files; `git diff --check` passed. Tests cover removing one identity while preserving another, case-insensitive removal, failed removal without file changes, empty-gallery save/load and subsequent registration, and worker identity-memory reset.
+- UI smoke check: an offscreen MainWindow loaded synthetic names and displayed a Remove action for each. Simulated **No** emitted no removal request; simulated **Yes** emitted the selected identity. This used a temporary UI fixture and did not access or modify the user's NPZ gallery.
+- Evidence boundary: these checks establish software behavior only. The user has not yet confirmed the normal desktop appearance or removed an identity from their own gallery; no identity-recognition accuracy comparison was run.

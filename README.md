@@ -1225,7 +1225,11 @@ gallery is private local data and is not committed to Git.
 
 Select **View Registered People** to see each saved identity and its sample
 count. The **Add Images** button beside a name appends photos to that identity;
-the gallery treats names case-insensitively and keeps the original spelling.
+the **Remove** button removes that identity and every saved embedding after a
+confirmation prompt. Removal is case-insensitive and keeps other people in the
+gallery unchanged; original image files are not changed. The gallery treats
+names case-insensitively and keeps the original spelling when adding samples.
+Removing the last person leaves a valid empty gallery ready for new samples.
 
 Smart Vision computes all selected image embeddings before saving. If any
 selected image cannot be read or does not contain exactly one face, the batch

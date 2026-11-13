@@ -1,8 +1,8 @@
 # Smart Vision — project and research-paper context
 
-**Prepared:** 2026-11-13
+**Prepared:** 2026-11-14
 
-**Repository snapshot:** starts at base commit `875244d` and includes the pose-guided registration and UI updates described here
+**Repository snapshot:** base commit `eac7919` plus the registered-person removal changes described here
 **Purpose:** keep the project’s research framing, architecture, development decisions, evidence boundaries, and reproducibility context in one place for later paper writing.
 
 Read this file together with [the experiment log](experiment_log.md). This document is the project-context and methods companion; the log is the dated record of comparisons, runs, anomalies, and results. They describe the project-specific information currently preserved in the repository. They do not replace external literature citations, raw datasets, or missing run artifacts.
@@ -159,9 +159,11 @@ Two user-facing registration methods are present:
 
 Names are matched case-insensitively when adding samples; the spelling of the first stored identity is retained. The pose values are coarse 2D landmark ratios, not calibrated head-pose angles. Their initial cutoffs are provisional and can be affected by camera viewpoint and landmark noise. The user reported that the pose-registration workflow worked in a camera trial on 2026-11-14, but device, resolution, lighting, per-pose outcomes, and capture errors were not recorded; this is not a validation study. No measured benefit of five views has been established. The gallery is biometric data and remains local/ignored by Git; it should not be committed or treated as a public sample artifact.
 
+The **View Registered People** dialog lists identities and sample counts and supports adding or removing samples by person. Removal requires explicit confirmation, matches the name case-insensitively, and removes every saved embedding for that identity using the same temporary-file/atomic-replacement pattern as registration. The original source image files are not changed. Removing the final identity writes a valid empty NPZ gallery, which loads as an empty registry and returns `NO_MATCH` for queries. The worker resets track identity memory after a successful removal so it does not keep displaying a name removed from the gallery.
+
 ## 5. Current configuration snapshot
 
-These values describe the base commit `875244d` plus the local pose-guided registration changes from 2026-11-13 and the UI polish from 2026-11-14. UI settings may change during a run; record actual values for every experiment.
+These values describe commit `eac7919` plus the local registered-person removal changes recorded on 2026-11-14. UI settings may change during a run; record actual values for every experiment.
 
 | Setting | Current default / rule | Evidence status |
 |---|---|---|
@@ -198,7 +200,8 @@ The source history recorded here starts at commit `875244d`; at document prepara
 | 2026-10-28 | `5ac6680` | Face registration, persistent NPZ integration, and track identity memory. |
 | 2026-10-31 | `875244d` | Registered-people gallery manager and guided live face registration. |
 | 2026-11-13 | Pose-guided registration | Relative landmark pose checks and automatic capture added for four non-frontal prompts. |
-| 2026-11-14 | Registration UI feedback | User reported the pose workflow worked in a camera trial. A progress ring, head guide, directional arrow, and clearer status labels were added; quantitative camera validation remains unavailable. |
+| 2026-11-14 | `eac7919` | Progress ring, head guide, directional arrow, clearer registration instructions, and the research-context record were pushed; user reported the pose workflow worked in a camera trial. |
+| 2026-11-14 | Local removal feature | Registered-person removal with confirmation, case-insensitive sample deletion, atomic NPZ persistence, and empty-gallery support added; software tests are recorded in the experiment log. |
 
 The release tag remains `v0.2.0`; later features are unreleased development at this snapshot. Commit dates and subjects document repository history, not necessarily the exact date a user first tested or conceived each feature.
 
@@ -237,7 +240,7 @@ This was a small user-reported run recovered from the handoff, not rerun at comm
 
 The experiment log records a real fire-model inference regression check on one repository sample image with two fire detections (confidences 0.863 and 0.838). This is not a dataset-level fire evaluation. The repository tests cover units such as temporal logic, dwell rules, face association, registry persistence, and identity memory. An optional real-model integration test is dependent on local model weights and sample media.
 
-At the 2026-10-31 implementation snapshot, the recorded software checks were 59 passing tests, Ruff lint/format checks, a Black-engine formatting check for the changed Python files, `git diff --check`, and an offscreen Qt dialog smoke check. The offscreen check used synthetic frames; it did not exercise a physical webcam or InsightFace live inference. The 2026-11-13 pose-guidance check uses mocked landmarks and synthetic frames; it also does not establish performance on a physical webcam.
+At the 2026-10-31 implementation snapshot, the recorded software checks were 59 passing tests, Ruff lint/format checks, a Black-engine formatting check for the changed Python files, `git diff --check`, and an offscreen Qt dialog smoke check. The offscreen check used synthetic frames; it did not exercise a physical webcam or InsightFace live inference. The 2026-11-13 pose-guidance check uses mocked landmarks and synthetic frames; it also does not establish performance on a physical webcam. The 2026-11-14 registered-person removal update brings the full test suite to 74 passing tests and adds an offscreen confirmation-flow check; see the dated log entry for exact scope and limits.
 
 ### 7.4 Claims currently supportable
 
