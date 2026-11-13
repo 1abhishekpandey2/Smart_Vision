@@ -42,6 +42,7 @@ def make_request(
     face_recognition_enabled: bool,
     source_time_seconds: float = 0.0,
     identity_confirmation_observations: int = 3,
+    source_id: str | None = None,
 ) -> VisionRequest:
     return VisionRequest(
         frame=Frame(
@@ -64,6 +65,7 @@ def make_request(
         zone_points=(),
         source_time_seconds=source_time_seconds,
         generation=1,
+        source_id=source_id,
     )
 
 
@@ -172,7 +174,7 @@ def test_worker_keeps_confirmed_identity_after_face_disappears():
     assert results[-1].overlays[0].label == "Person #12 90% | Identity: alice"
 
 
-def test_worker_uses_selected_identity_confirmation_count():
+def test_worker_emits_timestamped_event_when_identity_is_confirmed():
     worker = VisionWorker()
     worker._person_tracker = FakePersonTracker(
         [
@@ -201,8 +203,26 @@ def test_worker_uses_selected_identity_confirmation_count():
     worker.process(
         make_request(
             face_recognition_enabled=True,
+            source_time_seconds=2.25,
             identity_confirmation_observations=1,
+            source_id="sample.mp4",
         )
     )
 
     assert results[0].overlays[0].label == "Person #12 90% | Identity: alice"
+    assert len(results[0].events) == 1
+    event = results[0].events[0]
+    assert event.event_type == "IDENTITY"
+    assert event.description == "Person #12 identified as alice"
+    assert event.source_time_seconds == 2.25
+    assert event.source_id == "sample.mp4"
+
+    worker.process(
+        make_request(
+            face_recognition_enabled=True,
+            source_time_seconds=2.5,
+            identity_confirmation_observations=1,
+            source_id="sample.mp4",
+        )
+    )
+    assert results[1].events == ()

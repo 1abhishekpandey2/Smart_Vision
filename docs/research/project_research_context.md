@@ -2,7 +2,7 @@
 
 **Prepared:** 2026-11-14
 
-**Repository snapshot:** base commit `eac7919` plus the registered-person removal changes described here
+**Repository snapshot:** base commit `a477155` plus the timestamped notification changes described here
 **Purpose:** keep the project’s research framing, architecture, development decisions, evidence boundaries, and reproducibility context in one place for later paper writing.
 
 Read this file together with [the experiment log](experiment_log.md). This document is the project-context and methods companion; the log is the dated record of comparisons, runs, anomalies, and results. They describe the project-specific information currently preserved in the repository. They do not replace external literature citations, raw datasets, or missing run artifacts.
@@ -65,7 +65,7 @@ VisionResult: overlays, paths, counts, evidence, events
 Video view and desktop metrics/event list
 ```
 
-`Frame` is the source boundary. A `VisionRequest` carries the frame, current settings, normalized polygon points, source time in seconds, and a generation number. A `VisionResult` carries overlays, paths, counts, fire evidence, confirmation status, zone state, and events. This keeps model-specific result objects out of most UI and reasoning code.
+`Frame` is the source boundary. A `VisionRequest` carries the frame, current settings, normalized polygon points, source time in seconds, a generation number, and an optional recording path. A `VisionResult` carries overlays, paths, counts, fire evidence, confirmation status, zone state, and timestamped events. This keeps model-specific result objects out of most UI and reasoning code.
 
 The desktop application runs `VisionWorker` on a `QThread`. Model loading is lazy: fire, person, and face components are initialized only when their feature is first requested. The UI uses a latest-frame policy: when inference is busy, the pending request is replaced with the newest frame instead of accumulating a long queue. This favors a current preview over processing every captured frame. It also means processed observations may be skipped when inference is slower than capture; this matters when interpreting observation-count and latency behavior.
 
@@ -86,6 +86,7 @@ Video source time is used for recorded-video reasoning. Live webcam reasoning us
 | Saved face gallery | `app/recognition/registry.py` | NPZ persistence, sample append, cosine-similarity matching, match states. |
 | Runtime identity state | `app/recognition/identity_memory.py` | Strong-evidence quorum, per-track name retention and expiry. |
 | Desktop orchestration | `app/ui/main_window.py`, `app/ui/workers/vision_worker.py` | Settings, asynchronous requests, UI state, result flow. |
+| Timestamped notifications | `app/ui/vision_types.py`, `app/ui/workers/vision_worker.py` | Trigger events with source-time offsets and optional recording paths. |
 | Live registration dialog | `app/ui/face_registration_dialog.py` | Circular preview, five user prompts, explicit capture action. |
 | Research evidence | `docs/research/experiment_log.md` | Dated user reports, implementation checks, proposed protocols, and results. |
 
@@ -99,7 +100,7 @@ The worker initializes both YOLO components with a permissive internal inference
 
 Every accepted detection is drawn as a box. A frame contributes a positive observation to `TemporalPersistence` only when at least one accepted detection has class name `fire`. The temporal rule uses a 10-observation window and requires 7 positive observations. Confirmation is not possible until the window is full. The worker emits `FIRE` and `Fire cleared` events when the confirmed state changes. Fire evidence shown in the UI distinguishes warming, possible, and confirmed states.
 
-Smoke boxes are drawn, but smoke is not counted as a positive fire observation, does not use a corresponding 7-of-10 smoke rule, and does not produce an equivalent temporally confirmed smoke event in the retrieved worker. Do not describe smoke as temporally confirmed unless later code and experiments establish that behavior.
+Smoke boxes are drawn, but smoke is not counted as a positive fire observation and does not use a corresponding 7-of-10 smoke rule. The notification list emits `SMOKE` and “Smoke no longer detected” events on edges of the confidence-filtered smoke detections. These are raw detection-state notices, not temporal smoke confirmation; temporal persistence remains fire-only.
 
 ### 4.2 Person tracking and track history
 
@@ -112,6 +113,8 @@ The application’s latest-frame scheduling means that tracking/inference runs o
 The UI stores a polygon in normalized coordinates. The worker converts it to frame pixels and evaluates each tracked person’s ground point. For intrusion monitoring, it remembers each track’s prior inside/outside state and emits an `INTRUSION` event only when the observed state changes from outside to inside. It emits `EXIT` on inside-to-outside. Initial observation inside the polygon is not, by itself, an outside-to-inside transition.
 
 The intrusion path is shown only after that track has entered through the observed transition. This is a rule-based state distinction, not a claim of intent or unauthorized behavior. A missing track, imperfect ground point, or tracker-ID change can affect whether the transition is observed. The current UI supports one polygon for the active scene.
+
+`VisionEvent` carries the source-time offset and recording path when a request comes from a video. The event panel displays that offset to milliseconds and clicking a row pauses playback and seeks to the triggering frame. Live events use the frame's local wall-clock timestamp and do not carry a seekable recording position. The panel resets when the active source changes so old events cannot be applied to a different recording. Because the latest-frame worker may skip frames, the timestamp is the processed frame where the rule fired, not guaranteed ground-truth onset time.
 
 ### 4.4 Dwell / loitering
 
@@ -148,6 +151,8 @@ The saved gallery and runtime identity memory solve different problems:
 
 Only `STRONG_MATCH` results enter the memory evidence. Defaults are 3 observations for one identity within a rolling 2.0-source-second evidence window. Once confirmed, the name is retained while that track remains active, including frames with no detected face. Pending evidence expires outside the window. A missing track expires after 2.0 source seconds; a later track reusing that ID starts without the old identity. One conflicting strong observation does not replace a confirmed name. Conflicting identities that both reach quorum leave an unconfirmed track unknown. The UI exposes a confirmation count from 1 to 10; changing the count resets the runtime analysis state.
 
+The notification list emits one `IDENTITY` event when a track first reaches its configured strong-match quorum. Unconfirmed candidate or strong-match progress is not added as a separate event on every frame.
+
 These are initial, configurable rules. The 3/2-second settings are not derived from the fire 7-of-10 rule and have not been validated as optimal. User-reported count experiments and qualitative outcomes are in the experiment log.
 
 ### 4.8 Face registration
@@ -163,7 +168,7 @@ The **View Registered People** dialog lists identities and sample counts and sup
 
 ## 5. Current configuration snapshot
 
-These values describe commit `eac7919` plus the local registered-person removal changes recorded on 2026-11-14. UI settings may change during a run; record actual values for every experiment.
+These values describe commit `a477155` plus the timestamped notification changes recorded on 2026-11-14. UI settings may change during a run; record actual values for every experiment.
 
 | Setting | Current default / rule | Evidence status |
 |---|---|---|
@@ -188,7 +193,7 @@ These values describe commit `eac7919` plus the local registered-person removal 
 
 ## 6. Development history and decisions
 
-The source history recorded here starts at commit `875244d`; at document preparation, `origin/main` pointed to that commit. Later pose-guided registration and UI changes are documented below. Use `git rev-parse HEAD` for the current exact revision. The major repository milestones are:
+The source history recorded here includes the project milestones through `875244d` and later changes. At the start of the timestamped-notifications work, `origin/main` pointed to `a477155`. Use `git rev-parse HEAD` for the current exact revision. The major repository milestones are:
 
 | Date | Revision / milestone | Project state added or changed |
 |---|---|---|
@@ -201,7 +206,8 @@ The source history recorded here starts at commit `875244d`; at document prepara
 | 2026-10-31 | `875244d` | Registered-people gallery manager and guided live face registration. |
 | 2026-11-13 | Pose-guided registration | Relative landmark pose checks and automatic capture added for four non-frontal prompts. |
 | 2026-11-14 | `eac7919` | Progress ring, head guide, directional arrow, clearer registration instructions, and the research-context record were pushed; user reported the pose workflow worked in a camera trial. |
-| 2026-11-14 | Local removal feature | Registered-person removal with confirmation, case-insensitive sample deletion, atomic NPZ persistence, and empty-gallery support added; software tests are recorded in the experiment log. |
+| 2026-11-14 | `a477155` | Registered-person removal with confirmation, case-insensitive sample deletion, atomic NPZ persistence, and empty-gallery support. |
+| 2026-11-14 | Local notifications feature | Timestamped fire, smoke-edge, intrusion, exit, loitering, and identity events added; recording events seek to their trigger frame. |
 
 The release tag remains `v0.2.0`; later features are unreleased development at this snapshot. Commit dates and subjects document repository history, not necessarily the exact date a user first tested or conceived each feature.
 
@@ -240,7 +246,7 @@ This was a small user-reported run recovered from the handoff, not rerun at comm
 
 The experiment log records a real fire-model inference regression check on one repository sample image with two fire detections (confidences 0.863 and 0.838). This is not a dataset-level fire evaluation. The repository tests cover units such as temporal logic, dwell rules, face association, registry persistence, and identity memory. An optional real-model integration test is dependent on local model weights and sample media.
 
-At the 2026-10-31 implementation snapshot, the recorded software checks were 59 passing tests, Ruff lint/format checks, a Black-engine formatting check for the changed Python files, `git diff --check`, and an offscreen Qt dialog smoke check. The offscreen check used synthetic frames; it did not exercise a physical webcam or InsightFace live inference. The 2026-11-13 pose-guidance check uses mocked landmarks and synthetic frames; it also does not establish performance on a physical webcam. The 2026-11-14 registered-person removal update brings the full test suite to 74 passing tests and adds an offscreen confirmation-flow check; see the dated log entry for exact scope and limits.
+At the 2026-10-31 implementation snapshot, the recorded software checks were 59 passing tests, Ruff lint/format checks, a Black-engine formatting check for the changed Python files, `git diff --check`, and an offscreen Qt dialog smoke check. The offscreen check used synthetic frames; it did not exercise a physical webcam or InsightFace live inference. The 2026-11-13 pose-guidance check uses mocked landmarks and synthetic frames; it also does not establish performance on a physical webcam. The registered-person removal update brought the suite to 74 passing tests. The timestamped-notifications update brings it to 81 and includes synthetic event and seek checks; neither update establishes detector accuracy or live operational performance. See the dated log entries for scope and evidence limits.
 
 ### 7.4 Claims currently supportable
 
@@ -336,7 +342,7 @@ Use these two research files as the project-specific writing base:
 1. **This context file:** project summary, system architecture, algorithm behavior, parameters, implementation decisions, current claim boundaries, reproducibility notes, and gaps.
 2. **[The experiment log](experiment_log.md):** dated results, user-reported observations, threshold analysis, comparison proposals, anomalies, and run-record template.
 
-Consult the current source when a method detail has changed after snapshot `875244d`. The README remains the setup and operator guide. `docs/architecture.md` is currently only a short environment decision note, so it is not a replacement for this context file.
+Consult the current source when a method detail has changed after snapshot `a477155`. The README remains the setup and operator guide. `docs/architecture.md` is currently only a short environment decision note, so it is not a replacement for this context file.
 
 Suggested paper organization (a proposal, not an adopted paper outline):
 

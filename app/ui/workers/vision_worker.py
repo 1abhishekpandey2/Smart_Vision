@@ -105,6 +105,8 @@ class VisionWorker(QObject):
         )
 
         self._previous_fire_confirmed = False
+        self._previous_smoke_present = False
+        self._reported_identity_by_track: dict[int, str] = {}
 
         # ======================================================
         # PERSON TRACK HISTORY
@@ -284,6 +286,7 @@ class VisionWorker(QObject):
             self._face_embedder = embedder
             self._face_registry = registry
             self._identity_memory.reset()
+            self._reported_identity_by_track.clear()
 
             self.face_registration_succeeded.emit(
                 f"Registered {len(embeddings)} image(s) for '{stored_identity}'."
@@ -345,6 +348,7 @@ class VisionWorker(QObject):
             self._save_face_registry_atomically(registry)
             self._face_registry = registry
             self._identity_memory.reset()
+            self._reported_identity_by_track.clear()
             self.face_registration_succeeded.emit(
                 f"Registered {len(embeddings)} live sample(s) for '{stored_identity}'."
             )
@@ -395,6 +399,7 @@ class VisionWorker(QObject):
             self._save_face_registry_atomically(registry)
             self._face_registry = registry
             self._identity_memory.reset()
+            self._reported_identity_by_track.clear()
             self.face_identity_removal_succeeded.emit(stored_identity)
         except Exception as exc:
             self.face_identity_removal_failed.emit(str(exc))
@@ -424,6 +429,7 @@ class VisionWorker(QObject):
         self._fire_temporal.reset()
 
         self._previous_fire_confirmed = False
+        self._previous_smoke_present = False
 
         # ------------------------------------------------------
         # INTRUSION
@@ -438,6 +444,7 @@ class VisionWorker(QObject):
         self._zone_signature = None
         self._dwell_tracker.reset()
         self._identity_memory.reset()
+        self._reported_identity_by_track.clear()
 
         # ------------------------------------------------------
         # BYTETRACK
@@ -506,6 +513,17 @@ class VisionWorker(QObject):
 
             events = []
 
+            def record_event(event_type: str, description: str) -> None:
+                events.append(
+                    VisionEvent(
+                        timestamp=frame.timestamp,
+                        event_type=event_type,
+                        description=description,
+                        source_time_seconds=request.source_time_seconds,
+                        source_id=request.source_id,
+                    )
+                )
+
             people_count = 0
 
             inside_zone_count = 0
@@ -553,6 +571,16 @@ class VisionWorker(QObject):
                 fire_present = any(
                     detection.class_name == "fire" for detection in detections
                 )
+                smoke_present = any(
+                    detection.class_name == "smoke" for detection in detections
+                )
+
+                if smoke_present and not self._previous_smoke_present:
+                    record_event("SMOKE", "Smoke detected")
+                elif self._previous_smoke_present and not smoke_present:
+                    record_event("SMOKE", "Smoke no longer detected")
+
+                self._previous_smoke_present = smoke_present
 
                 self._fire_temporal.observe(fire_present)
 
@@ -560,23 +588,11 @@ class VisionWorker(QObject):
 
                 # False -> True
                 if fire_confirmed and not self._previous_fire_confirmed:
-                    events.append(
-                        VisionEvent(
-                            timestamp=(frame.timestamp),
-                            event_type="FIRE",
-                            description=("Fire confirmed"),
-                        )
-                    )
+                    record_event("FIRE", "Fire confirmed")
 
                 # True -> False
                 elif self._previous_fire_confirmed and not fire_confirmed:
-                    events.append(
-                        VisionEvent(
-                            timestamp=(frame.timestamp),
-                            event_type="FIRE",
-                            description=("Fire cleared"),
-                        )
-                    )
+                    record_event("FIRE", "Fire cleared")
 
                 self._previous_fire_confirmed = fire_confirmed
 
@@ -606,6 +622,7 @@ class VisionWorker(QObject):
                 self._fire_temporal.reset()
 
                 self._previous_fire_confirmed = False
+                self._previous_smoke_present = False
 
                 fire_confirmed = False
 
@@ -697,6 +714,7 @@ class VisionWorker(QObject):
                                 settings.identity_confirmation_observations
                             ),
                         )
+                        self._reported_identity_by_track.clear()
 
                     strong_identities = {
                         track_id: match.identity
@@ -712,8 +730,22 @@ class VisionWorker(QObject):
                         active_track_ids={track.track_id for track in tracks},
                         strong_identities=strong_identities,
                     )
+                    active_track_ids = {track.track_id for track in tracks}
+                    for track_id, identity in remembered_identities.items():
+                        if self._reported_identity_by_track.get(track_id) != identity:
+                            record_event(
+                                "IDENTITY",
+                                f"Person #{track_id} identified as {identity}",
+                            )
+                            self._reported_identity_by_track[track_id] = identity
+                    self._reported_identity_by_track = {
+                        track_id: identity
+                        for track_id, identity in self._reported_identity_by_track.items()
+                        if track_id in active_track_ids
+                    }
                 else:
                     self._identity_memory.reset()
+                    self._reported_identity_by_track.clear()
                     remembered_identities = {}
 
                 people_count = len(tracks)
@@ -781,14 +813,9 @@ class VisionWorker(QObject):
                             # path now becomes visible.
                             self._active_intrusion_ids.add(track.track_id)
 
-                            events.append(
-                                VisionEvent(
-                                    timestamp=(frame.timestamp),
-                                    event_type=("INTRUSION"),
-                                    description=(
-                                        f"Person #{track.track_id} entered zone"
-                                    ),
-                                )
+                            record_event(
+                                "INTRUSION",
+                                f"Person #{track.track_id} entered zone",
                             )
 
                         # ======================================
@@ -801,14 +828,9 @@ class VisionWorker(QObject):
                             # Stop displaying intrusion path.
                             self._active_intrusion_ids.discard(track.track_id)
 
-                            events.append(
-                                VisionEvent(
-                                    timestamp=(frame.timestamp),
-                                    event_type="EXIT",
-                                    description=(
-                                        f"Person #{track.track_id} exited zone"
-                                    ),
-                                )
+                            record_event(
+                                "EXIT",
+                                f"Person #{track.track_id} exited zone",
                             )
 
                         # Save current state for next frame.
@@ -831,18 +853,10 @@ class VisionWorker(QObject):
                             loitering_count += 1
 
                         if dwell_state.just_triggered:
-                            events.append(
-                                VisionEvent(
-                                    timestamp=(frame.timestamp),
-                                    event_type="LOITERING",
-                                    description=(
-                                        f"Person "
-                                        f"#{track.track_id} "
-                                        f"exceeded "
-                                        f"{settings.dwell_seconds}s "
-                                        f"dwell time"
-                                    ),
-                                )
+                            record_event(
+                                "LOITERING",
+                                f"Person #{track.track_id} exceeded "
+                                f"{settings.dwell_seconds}s dwell time",
                             )
 
                     # ==========================================
@@ -953,6 +967,7 @@ class VisionWorker(QObject):
                 self._dwell_tracker.reset()
 
                 self._identity_memory.reset()
+                self._reported_identity_by_track.clear()
 
             # ==================================================
             # CREATE RESULT

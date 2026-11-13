@@ -109,6 +109,7 @@ class MainWindow(QMainWindow):
         self._face_registration_busy = False
         self._live_face_dialog = None
         self._live_face_session_active = False
+        self._event_keys = set()
 
         # Create before building widgets because
         # QComboBox signals can fire during construction.
@@ -518,7 +519,7 @@ class MainWindow(QMainWindow):
 
         header = QHBoxLayout()
 
-        header.addWidget(self._section_title("RECENT EVENTS"))
+        header.addWidget(self._section_title("ALERTS & EVENTS"))
 
         header.addStretch()
 
@@ -537,7 +538,7 @@ class MainWindow(QMainWindow):
 
         self.event_table.setHorizontalHeaderLabels(
             [
-                "Time",
+                "Time / offset",
                 "Type",
                 "Event",
             ]
@@ -548,6 +549,11 @@ class MainWindow(QMainWindow):
         self.event_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
 
         self.event_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.event_table.setToolTip(
+            "Click an event from a recording to jump to its video timestamp."
+        )
+        self.event_table.setCursor(Qt.PointingHandCursor)
+        self.event_table.cellClicked.connect(self._event_row_clicked)
 
         header_view = self.event_table.horizontalHeader()
 
@@ -1309,20 +1315,22 @@ class MainWindow(QMainWindow):
 
         self._reset_vision_runtime(reanalyse=False)
 
+        self._clear_events()
+
         video_name = Path(path).name
 
         self.video_view.set_source_name(video_name)
 
+        self._active_source_kind = "video"
+        self._selected_video_path = path
+        self._video_position_seconds = 0.0
+
         success = self.video_player.open_video(path)
 
         if not success:
+            self._active_source_kind = None
+            self._selected_video_path = None
             return
-
-        self._active_source_kind = "video"
-
-        self._video_position_seconds = 0.0
-
-        self._selected_video_path = path
 
         self.source_info.setText(f"Recorded video\n\n{path}")
 
@@ -1375,6 +1383,7 @@ class MainWindow(QMainWindow):
         # STOP RECORDED VIDEO
         # ==========================================================
 
+        self._clear_events()
         self.video_player.close_video()
 
         self._selected_video_path = None
@@ -1507,6 +1516,12 @@ class MainWindow(QMainWindow):
             zone_points=(tuple(self.video_view.zone_points)),
             source_time_seconds=source_time_seconds,
             generation=(self._analysis_generation),
+            source_id=(
+                str(self._selected_video_path)
+                if self._active_source_kind == "video"
+                and self._selected_video_path is not None
+                else None
+            ),
         )
 
         # AI already working:
@@ -1549,10 +1564,16 @@ class MainWindow(QMainWindow):
         )
 
         for event in result.events:
+            if event.source_id is not None and event.source_time_seconds is not None:
+                time_text = self._format_event_video_time(event.source_time_seconds)
+            else:
+                time_text = event.timestamp.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
             self.add_event(
-                event.timestamp.strftime("%H:%M:%S"),
+                time_text,
                 event.event_type,
                 event.description,
+                source_id=event.source_id,
+                source_time_seconds=event.source_time_seconds,
             )
 
     def _vision_analysis_finished(
@@ -1877,22 +1898,37 @@ class MainWindow(QMainWindow):
 
     def _clear_events(self):
         self.event_table.setRowCount(0)
+        self._event_keys.clear()
 
     def add_event(
         self,
         time_text: str,
         event_type: str,
         description: str,
+        source_id: str | None = None,
+        source_time_seconds: float | None = None,
     ):
+        if source_id is not None and source_time_seconds is not None:
+            event_key = (
+                source_id,
+                round(source_time_seconds, 6),
+                event_type,
+                description,
+            )
+        else:
+            event_key = (time_text, event_type, description)
+        if event_key in self._event_keys:
+            return
+        self._event_keys.add(event_key)
+
         row = self.event_table.rowCount()
 
         self.event_table.insertRow(row)
 
-        self.event_table.setItem(
-            row,
-            0,
-            QTableWidgetItem(time_text),
-        )
+        time_item = QTableWidgetItem(time_text)
+        time_item.setData(Qt.UserRole, source_time_seconds)
+        time_item.setData(Qt.UserRole + 1, source_id)
+        self.event_table.setItem(row, 0, time_item)
 
         self.event_table.setItem(
             row,
@@ -1907,6 +1943,52 @@ class MainWindow(QMainWindow):
         )
 
         self.event_table.scrollToBottom()
+
+    @staticmethod
+    def _format_event_video_time(seconds: float) -> str:
+        milliseconds = round(max(0.0, seconds) * 1000)
+        hours, remainder = divmod(milliseconds, 3_600_000)
+        minutes, remainder = divmod(remainder, 60_000)
+        whole_seconds, milliseconds = divmod(remainder, 1000)
+        return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d}.{milliseconds:03d}"
+
+    def _event_row_clicked(self, row: int, _column: int) -> None:
+        time_item = self.event_table.item(row, 0)
+        if time_item is None:
+            return
+
+        source_time_seconds = time_item.data(Qt.UserRole)
+        source_id = time_item.data(Qt.UserRole + 1)
+        if source_id is None or source_time_seconds is None:
+            self.statusBar().showMessage(
+                f"Live event at {time_item.text()}; there is no recording position to seek to.",
+                5000,
+            )
+            return
+
+        if (
+            self._active_source_kind != "video"
+            or self._selected_video_path is None
+            or str(self._selected_video_path) != source_id
+            or not self.video_player.has_source
+        ):
+            self.statusBar().showMessage(
+                "Open the recording that produced this event to jump to it.",
+                5000,
+            )
+            return
+
+        seconds = float(source_time_seconds)
+        self.video_player.pause()
+        self._reset_vision_runtime(reanalyse=False)
+        if not self.video_player.seek_seconds(seconds):
+            self.statusBar().showMessage("Could not seek to this event.", 5000)
+            return
+
+        self.statusBar().showMessage(
+            f"Jumped to event at {self._format_event_video_time(seconds)}.",
+            5000,
+        )
 
     # ==========================================================
     # METRICS

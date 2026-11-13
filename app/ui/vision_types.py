@@ -34,6 +34,7 @@ class VisionRequest:
     zone_points: tuple[Point, ...]
     source_time_seconds: float
     generation: int
+    source_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,8 @@ class VisionEvent:
     timestamp: datetime
     event_type: str
     description: str
+    source_time_seconds: float | None = None
+    source_id: str | None = None
 
 
 @dataclass(frozen=True)

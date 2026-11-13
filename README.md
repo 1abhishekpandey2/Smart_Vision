@@ -613,9 +613,20 @@ Current event concepts include:
 | Event         | Meaning                                                           |
 | ------------- | ----------------------------------------------------------------- |
 | `FIRE`      | Temporal fire state becomes confirmed or clears                   |
+| `SMOKE`     | A filtered smoke detection appears or is no longer detected       |
 | `INTRUSION` | A tracked person crosses from outside to inside a restricted zone |
 | `EXIT`      | A tracked person moves from inside to outside the restricted zone |
 | `LOITERING` | A tracked person exceeds the configured continuous dwell duration |
+| `IDENTITY`  | A tracked person reaches the configured strong-match quorum       |
+
+The event table shows recorded-video offsets to the nearest millisecond. Click
+an event to pause and jump to the frame where it was raised. Live-camera events
+show their local date and time; they cannot be replayed because a live stream
+has no recording timeline. Since the worker may skip frames while inference is
+busy, an event time identifies the processed frame where the rule triggered;
+it may be later than the event's first real-world appearance. Smoke notices
+follow smoke-detection edges and do not use temporal persistence; temporal
+persistence remains fire-only.
 
 Conceptually:
 
@@ -665,7 +676,7 @@ Conceptually:
 │                         PLAYBACK CONTROLS                           │
 │                  Restart / Play / Pause / Timeline                 │
 ├────────────────────────────────────────────────────────────────────┤
-│                          RECENT EVENTS                              │
+│                        ALERTS & EVENTS                              │
 └────────────────────────────────────────────────────────────────────┘
 ```
 

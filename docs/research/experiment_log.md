@@ -268,3 +268,14 @@ Copy this section for each actual comparison or test.
 - Verification: full `.venv` pytest suite — **74 passed**; `ruff check .` passed; Ruff format and Black checks passed for the four changed Python files; `git diff --check` passed. Tests cover removing one identity while preserving another, case-insensitive removal, failed removal without file changes, empty-gallery save/load and subsequent registration, and worker identity-memory reset.
 - UI smoke check: an offscreen MainWindow loaded synthetic names and displayed a Remove action for each. Simulated **No** emitted no removal request; simulated **Yes** emitted the selected identity. This used a temporary UI fixture and did not access or modify the user's NPZ gallery.
 - Evidence boundary: these checks establish software behavior only. The user has not yet confirmed the normal desktop appearance or removed an identity from their own gallery; no identity-recognition accuracy comparison was run.
+
+## 2026-11-14 — Timestamped notifications and recording seek
+
+**Status:** implemented and software-tested in the local working tree; normal-app playback behavior remains for the user to check.
+
+- The event list now records `FIRE` confirmation/clear, `SMOKE` detection/no-longer-detected edges, restricted-zone `INTRUSION` and `EXIT`, `LOITERING` threshold, and one `IDENTITY` event when a track reaches its strong-match quorum.
+- Smoke event boundaries follow confidence-filtered detector presence. Smoke does not use temporal persistence; fire remains the only temporally confirmed fire/smoke class. Identity candidates and per-frame strong-match progress are not repeated as notifications.
+- `VisionEvent` carries the processed frame's source-time offset and video path for recordings. Rows display the offset to milliseconds; clicking a row pauses playback and seeks to the nearest frame for that event. Position updates are delivered before frame analysis so the first opened frame and subsequent notifications receive the correct source offset. Switching sources clears the current event list.
+- Live events show the frame's local date and time and are not seekable. Because the worker processes latest frames and may skip observations, a timestamp identifies the frame where the event rule triggered; it does not guarantee the first frame of the real-world event.
+- Verification: full `.venv` pytest suite — **81 passed**; `ruff check .` passed; Ruff format and Black checks passed for all seven changed Python files; `git diff --check` passed. Synthetic worker tests cover fire, smoke, intrusion, loitering, and identity event offsets; UI tests cover millisecond timecode, click-to-seek, live-event no-seek behavior, deduplication, and nearest-frame seek ordering.
+- Evidence boundary: tests use synthetic detections/tracks and a fake video camera. They do not establish detector accuracy, true event-onset timing, or end-to-end seek behavior on a physical recording.

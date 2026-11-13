@@ -84,14 +84,14 @@ class VideoPlaybackController(QObject):
         # Show first frame immediately.
         frame = camera.read_frame()
 
-        if frame is not None:
-            self.frame_ready.emit(frame)
-
         # But playback itself starts
         # from the beginning.
         camera.restart()
 
         self.position_changed.emit(0.0)
+
+        if frame is not None:
+            self.frame_ready.emit(frame)
 
         self.playback_state_changed.emit(False)
 
@@ -163,6 +163,19 @@ class VideoPlaybackController(QObject):
 
         self._show_current_frame()
 
+    def seek_seconds(self, seconds: float) -> bool:
+        """Seek to the closest frame for a source-time offset in seconds."""
+
+        if self._camera is None or self._camera.fps <= 0:
+            return False
+
+        target_frame = round(max(0.0, seconds) * self._camera.fps)
+        if not self._camera.seek_frame(target_frame):
+            return False
+
+        self._show_current_frame()
+        return True
+
     # ==========================================================
     # SPEED
     # ==========================================================
@@ -172,7 +185,7 @@ class VideoPlaybackController(QObject):
         speed: float,
     ) -> None:
         if speed <= 0:
-            raise ValueError("Playback speed must be " "greater than zero.")
+            raise ValueError("Playback speed must be greater than zero.")
 
         self._speed = speed
 
@@ -210,9 +223,9 @@ class VideoPlaybackController(QObject):
         if frame is None:
             return
 
-        self.frame_ready.emit(frame)
-
         self.position_changed.emit(self._camera.current_time_seconds)
+
+        self.frame_ready.emit(frame)
 
     def _read_next_frame(
         self,
@@ -233,9 +246,9 @@ class VideoPlaybackController(QObject):
 
             return
 
-        self.frame_ready.emit(frame)
-
         self.position_changed.emit(self._camera.current_time_seconds)
+
+        self.frame_ready.emit(frame)
 
     def _update_timer_interval(
         self,
