@@ -48,3 +48,39 @@ def test_detect_faces_skips_face_without_embedding():
     observations = embedder.detect_faces(np.zeros((100, 100, 3)))
 
     assert observations == []
+
+
+def test_inspect_live_capture_returns_embedding_and_landmark_pose():
+    face = SimpleNamespace(
+        normed_embedding=np.ones(512, dtype=np.float64),
+        kps=np.asarray(
+            [
+                [40.0, 40.0],
+                [60.0, 40.0],
+                [50.0, 55.0],
+                [45.0, 70.0],
+                [55.0, 70.0],
+            ],
+            dtype=np.float32,
+        ),
+    )
+    embedder = object.__new__(InsightFaceEmbedder)
+    embedder._analyzer = FakeFaceAnalyzer([face])
+
+    face_count, sample = embedder.inspect_live_capture(np.zeros((100, 100, 3)))
+
+    assert face_count == 1
+    assert sample.pose.nose_horizontal_offset == 0.0
+    assert sample.pose.nose_vertical_ratio == 0.5
+    assert sample.embedding.dtype == np.float32
+    assert sample.embedding.shape == (512,)
+
+
+def test_inspect_live_capture_requires_exactly_one_face():
+    embedder = object.__new__(InsightFaceEmbedder)
+    embedder._analyzer = FakeFaceAnalyzer([object(), object()])
+
+    face_count, sample = embedder.inspect_live_capture(np.zeros((100, 100, 3)))
+
+    assert face_count == 2
+    assert sample is None

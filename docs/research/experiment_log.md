@@ -2,6 +2,8 @@
 
 This file records methods, comparisons, decisions, and observed evidence that may support a later research paper. It is separate from application behavior and must not be treated as evidence of results unless a dated run record contains actual inputs and outputs.
 
+For the project narrative, architecture, implemented methods, development decisions, reproducibility boundaries, and current claim limits, read the companion [project research context](project_research_context.md). Use this log for dated comparisons and run-specific evidence.
+
 ## Evidence rules
 
 - Label each item as **reported**, **source-inspected**, **proposed**, or **observed in a run**.
@@ -234,3 +236,25 @@ Copy this section for each actual comparison or test.
 - Code revision: base `9471de2` plus the uncommitted gallery-manager changes and this implementation.
 - Verification: full project virtual-environment suite — **59 passed**; `ruff check .` and Ruff format checks passed; `git diff --check` passed. An offscreen Qt smoke check rendered the circular dialog, confirmed the capture button enables on frame receipt, and confirmed a capture advances the prompt. No physical webcam or InsightFace live inference was exercised in this check.
 - Pending user verification: open the application, start live registration for a test identity, complete all five prompts, confirm the gallery count increases by five, and check that the captured images themselves were not written to disk.
+
+## 2026-11-13 — Landmark-guided live pose capture
+
+**Status:** implemented and software-tested. On 2026-11-14 the user reported that the live pose-registration workflow worked in their camera trial; device, resolution, lighting, individual pose outcomes, and capture error counts were not recorded.
+
+- The user captures the frontal reference manually. For each of the prompted left, right, up, and down views, the vision worker analyzes at most one registration frame per timer cycle. A frame must contain exactly one face and provide InsightFace's five 2D landmarks and an embedding.
+- Horizontal cue: `(nose_x - eye_midpoint_x) / inter_eye_distance`, compared with the frontal reference. The left-preview-side target is a decrease of at least **0.12**; the right-preview-side target is an increase of at least **0.12**.
+- Vertical cue: `(nose_y - eye_midpoint_y) / (mouth_midpoint_y - eye_midpoint_y)`, compared with the frontal reference. The up target is a decrease of at least **0.08**; the down target is an increase of at least **0.08**.
+- Automatic capture occurs after **3 consecutive matching pose checks**. The timer interval is **250 ms**; actual elapsed time can be longer when inference or worker processing is busy. A **Capture manually** action remains available as an explicit override after the frontal reference.
+- Cutoff basis: 0.12 and 0.08 are initial engineering heuristics expressed in normalized landmark units. They were not selected by a camera calibration, labeled pose dataset, threshold sweep, or measured recognition result. They are not degrees and are not face similarity thresholds. No comparative evidence yet shows these values reliably detect the requested poses.
+- Software checks: full `.venv` pytest suite — **70 passed**; Ruff lint and format checks passed; Black formatting check passed for the changed Python files. Tests use synthetic landmarks/faces and validate the state flow; they do not establish real pose estimation quality.
+- Evidence boundary: the user's report supports only that the workflow functioned in their trial. It does not establish pose accuracy, false/missed capture rates, or improved face recognition. Device, resolution, lighting, actual pose outcomes, manual overrides, and capture counts remain unrecorded.
+
+## 2026-11-14 — Registration progress and pose guidance UI
+
+**Status:** user-reported usability issue addressed in the local working tree and software-verified.
+
+- User feedback: the pose capture worked, but there was no visible indication of when a pose had been accepted or when to move to the next angle.
+- UI change: added a circular ring around the camera preview. It fills cumulatively across the five samples and shows the current pose's three-check stability progress. Completing a pose advances the ring and changes the prompt. Added a translucent head-and-shoulders guide, a directional arrow, a numbered view label, and clearer text and capture controls.
+- The guide is an instruction aid. It does not alter landmark thresholds, embedding selection, or capture policy. Automatic non-frontal capture still requires three consecutive matching checks, and manual capture remains available.
+- Verification: full `.venv` pytest suite — **70 passed**; `ruff check .` passed; Ruff format check passed for the two changed Python files; Black check passed for those files; `git diff --check` passed. The ring's cumulative fraction and 1/3, 2/3, and completed-step transitions are covered by the dialog test. A synthetic offscreen UI render exercised the guide and ring painting. Repo-wide `ruff format --check .` still reports 13 unrelated files needing formatting; none were reformatted for this feature.
+- Evidence boundary: the prior camera trial was user-reported as working. No new physical-camera usability trial or recognition comparison is claimed. The synthetic frame and software tests do not show how the guide will align with every user's face or camera placement.

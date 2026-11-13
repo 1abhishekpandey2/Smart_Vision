@@ -66,7 +66,7 @@ class MainWindow(QMainWindow):
 
     face_gallery_request = pyqtSignal()
 
-    face_capture_request = pyqtSignal(object)
+    face_pose_check_request = pyqtSignal(object, bool)
 
     face_embedding_registration_request = pyqtSignal(str, object)
 
@@ -890,7 +890,9 @@ class MainWindow(QMainWindow):
 
         self.face_gallery_request.connect(self._vision_worker.load_face_gallery)
 
-        self.face_capture_request.connect(self._vision_worker.capture_face_embedding)
+        self.face_pose_check_request.connect(
+            self._vision_worker.inspect_face_pose_frame
+        )
 
         self.face_embedding_registration_request.connect(
             self._vision_worker.register_face_embeddings
@@ -918,12 +920,8 @@ class MainWindow(QMainWindow):
 
         self._vision_worker.face_gallery_failed.connect(self._face_gallery_failed)
 
-        self._vision_worker.face_capture_sample_ready.connect(
-            self._live_face_sample_ready
-        )
-
-        self._vision_worker.face_capture_sample_failed.connect(
-            self._live_face_sample_failed
+        self._vision_worker.face_pose_check_ready.connect(
+            self._live_face_pose_check_ready
         )
 
         self._vision_thread.start()
@@ -978,7 +976,7 @@ class MainWindow(QMainWindow):
             return
 
         dialog = FaceRegistrationDialog(identity, self)
-        dialog.capture_requested.connect(self._begin_live_sample_check)
+        dialog.pose_check_requested.connect(self._begin_live_pose_check)
         dialog.registration_requested.connect(self._begin_live_embedding_registration)
         self._vision_worker.face_registration_succeeded.connect(
             dialog.registration_succeeded
@@ -1005,23 +1003,17 @@ class MainWindow(QMainWindow):
         )
         self.face_embedding_registration_request.emit(identity, embeddings)
 
-    def _begin_live_sample_check(self, image) -> None:
+    def _begin_live_pose_check(self, image, manual_capture: bool) -> None:
         self._face_registration_busy = True
         self._set_face_registration_controls_enabled(False)
         self.live_face_registration_button.setEnabled(False)
-        self.face_capture_request.emit(image)
+        self.face_pose_check_request.emit(image, manual_capture)
 
-    def _live_face_sample_ready(self, embedding) -> None:
+    def _live_face_pose_check_ready(self, result) -> None:
         self._face_registration_busy = False
         self._set_face_registration_controls_enabled(True)
         if self._live_face_dialog is not None:
-            self._live_face_dialog.add_sample(embedding)
-
-    def _live_face_sample_failed(self, message: str) -> None:
-        self._face_registration_busy = False
-        self._set_face_registration_controls_enabled(True)
-        if self._live_face_dialog is not None:
-            self._live_face_dialog.show_capture_error(message)
+            self._live_face_dialog.handle_pose_check(result)
 
     def _disconnect_live_face_dialog(self, dialog) -> None:
         try:

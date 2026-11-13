@@ -1,6 +1,10 @@
 import numpy as np
 
-from app.recognition.association import FaceObservation
+from app.recognition.face_pose import (
+    FacePose,
+    FacePoseCheck,
+    LiveFaceSample,
+)
 from app.recognition.registry import FaceRegistry, MatchState
 from app.ui.workers.vision_worker import VisionWorker
 
@@ -13,15 +17,17 @@ class FakeEmbedder:
             return np.asarray([1.0, 0.0], dtype=np.float32)
         return np.asarray([0.0, 1.0], dtype=np.float32)
 
-    def detect_faces(self, image):
+    def inspect_live_capture(self, image):
         count = int(image[0, 0, 0])
-        return [
-            FaceObservation(
-                bounding_box=(0.0, 0.0, 1.0, 1.0),
-                embedding=np.asarray([1.0, float(index)], dtype=np.float32),
-            )
-            for index in range(count)
-        ]
+        if count != 1:
+            return count, None
+        return (
+            1,
+            LiveFaceSample(
+                pose=FacePose(0.0, 0.5),
+                embedding=np.asarray([1.0, 0.0], dtype=np.float32),
+            ),
+        )
 
 
 def test_registration_appends_samples_without_removing_existing_identity(tmp_path):
@@ -144,33 +150,33 @@ def test_registration_creates_gallery_when_no_registry_exists(tmp_path):
     assert success_messages == ["Registered 1 image(s) for 'alice'."]
 
 
-def test_live_capture_returns_embedding_when_exactly_one_face_is_detected():
+def test_live_pose_check_returns_embedding_when_exactly_one_face_is_detected():
     worker = VisionWorker()
     worker._face_embedder = FakeEmbedder()
-    samples = []
-    failures = []
-    worker.face_capture_sample_ready.connect(samples.append)
-    worker.face_capture_sample_failed.connect(failures.append)
+    results = []
+    worker.face_pose_check_ready.connect(results.append)
 
-    worker.capture_face_embedding(np.ones((2, 2, 3), dtype=np.uint8))
+    worker.inspect_face_pose_frame(np.ones((2, 2, 3), dtype=np.uint8), True)
 
-    assert len(samples) == 1
-    np.testing.assert_allclose(samples[0], [1.0, 0.0])
-    assert failures == []
+    assert len(results) == 1
+    assert isinstance(results[0], FacePoseCheck)
+    assert results[0].face_count == 1
+    assert results[0].manual_capture
+    np.testing.assert_allclose(results[0].sample.embedding, [1.0, 0.0])
 
 
-def test_live_capture_rejects_frames_without_exactly_one_face():
+def test_live_pose_check_rejects_frames_without_exactly_one_face():
     worker = VisionWorker()
     worker._face_embedder = FakeEmbedder()
-    samples = []
-    failures = []
-    worker.face_capture_sample_ready.connect(samples.append)
-    worker.face_capture_sample_failed.connect(failures.append)
+    results = []
+    worker.face_pose_check_ready.connect(results.append)
 
-    worker.capture_face_embedding(np.zeros((2, 2, 3), dtype=np.uint8))
+    worker.inspect_face_pose_frame(np.zeros((2, 2, 3), dtype=np.uint8), False)
 
-    assert samples == []
-    assert failures == ["Keep exactly one face in the camera view before capturing."]
+    assert len(results) == 1
+    assert results[0].face_count == 0
+    assert results[0].sample is None
+    assert not results[0].manual_capture
 
 
 def test_live_embeddings_append_to_existing_identity_and_save_npz(tmp_path):

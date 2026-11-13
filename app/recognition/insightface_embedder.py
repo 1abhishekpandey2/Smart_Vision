@@ -5,6 +5,7 @@ import numpy as np
 from insightface.app import FaceAnalysis
 
 from app.recognition.association import FaceObservation
+from app.recognition.face_pose import LiveFaceSample, estimate_face_pose
 
 
 class InsightFaceEmbedder:
@@ -35,8 +36,7 @@ class InsightFaceEmbedder:
 
         if len(faces) != 1:
             raise ValueError(
-                f"Expected exactly one face in {image_path}, "
-                f"but detected {len(faces)}."
+                f"Expected exactly one face in {image_path}, but detected {len(faces)}."
             )
 
         embedding = faces[0].normed_embedding
@@ -76,3 +76,23 @@ class InsightFaceEmbedder:
             )
 
         return observations
+
+    def inspect_live_capture(
+        self, image: np.ndarray
+    ) -> tuple[int, LiveFaceSample | None]:
+        """Return a pose and embedding only when exactly one face is present."""
+
+        faces = self._analyzer.get(image)
+        if len(faces) != 1:
+            return len(faces), None
+
+        face = faces[0]
+        if face.normed_embedding is None:
+            raise ValueError("No face embedding produced for the live frame.")
+        if face.kps is None:
+            raise ValueError("Face landmarks were not produced for the live frame.")
+
+        return 1, LiveFaceSample(
+            pose=estimate_face_pose(face.kps),
+            embedding=np.asarray(face.normed_embedding, dtype=np.float32),
+        )

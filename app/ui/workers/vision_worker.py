@@ -11,6 +11,7 @@ from app.reasoning.dwell import DwellTracker
 from app.reasoning.temporal import TemporalPersistence
 from app.recognition.association import associate_faces_to_tracks
 from app.recognition.identity_memory import TrackIdentityMemory
+from app.recognition.face_pose import FacePoseCheck
 from app.tracking.history import TrackHistoryStore
 from app.ui.vision_types import (
     OverlayBox,
@@ -55,9 +56,7 @@ class VisionWorker(QObject):
 
     face_gallery_failed = pyqtSignal(str)
 
-    face_capture_sample_ready = pyqtSignal(object)
-
-    face_capture_sample_failed = pyqtSignal(str)
+    face_pose_check_ready = pyqtSignal(object)
 
     def __init__(
         self,
@@ -288,9 +287,9 @@ class VisionWorker(QObject):
         except Exception as exc:
             self.face_registration_failed.emit(str(exc))
 
-    @pyqtSlot(object)
-    def capture_face_embedding(self, image) -> None:
-        """Extract one face embedding from a live BGR camera frame."""
+    @pyqtSlot(object, bool)
+    def inspect_face_pose_frame(self, image, manual_capture: bool) -> None:
+        """Inspect a throttled registration frame for face count, pose, and vector."""
 
         try:
             if self._face_embedder is None:
@@ -298,15 +297,23 @@ class VisionWorker(QObject):
 
                 self._face_embedder = InsightFaceEmbedder()
 
-            faces = self._face_embedder.detect_faces(image)
-            if len(faces) != 1:
-                raise ValueError(
-                    "Keep exactly one face in the camera view before capturing."
+            face_count, sample = self._face_embedder.inspect_live_capture(image)
+            self.face_pose_check_ready.emit(
+                FacePoseCheck(
+                    face_count=face_count,
+                    sample=sample,
+                    manual_capture=manual_capture,
                 )
-
-            self.face_capture_sample_ready.emit(faces[0].embedding.copy())
+            )
         except Exception as exc:
-            self.face_capture_sample_failed.emit(str(exc))
+            self.face_pose_check_ready.emit(
+                FacePoseCheck(
+                    face_count=0,
+                    sample=None,
+                    manual_capture=manual_capture,
+                    error=str(exc),
+                )
+            )
 
     @pyqtSlot(str, object)
     def register_face_embeddings(self, identity: str, embeddings) -> None:

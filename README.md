@@ -1252,17 +1252,20 @@ Do not commit face photos or the gallery.
 
 1. Enter the identity name and select **Register from Camera**. The app opens
    Webcam 0 if it is not already active.
-2. Follow the five prompts in the circular preview: straight, slight left,
-   slight right, chin up, and chin down. Press **Capture this view** for each
-   prompt. The worker accepts a frame only when it detects exactly one face.
+2. Look straight and press **Capture frontal reference**. For the left, right,
+   up, and down prompts, hold the requested pose; the app captures it after
+   three consecutive pose checks. **Capture manually** remains available as an
+   override. The arrow shows the requested direction, and the circular ring
+   advances as the pose checks pass and each of the five views is captured.
+   Each accepted frame must contain exactly one detected face.
 3. After all five samples pass validation, Smart Vision appends their embeddings
    directly to the NPZ gallery. The captured camera frames are not saved as
    photo files.
 
-The prompts are currently user-guided: the application does not yet verify that
-the requested head pose was achieved or capture it automatically. The five
-samples are useful as varied registration inputs, but their effect on matching
-accuracy has not yet been measured.
+Pose checks use provisional ratios from InsightFace's five facial landmarks,
+compared with the frontal reference. They are not calibrated pose angles, and
+their behavior has not yet been checked across cameras or lighting. The effect
+of five registration views on recognition accuracy also remains unmeasured.
 
 ## Show identities in video
 
